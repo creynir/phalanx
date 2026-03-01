@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-import subprocess
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
-import pytest
 
 from phalanx.process.worktree import create_worktree, remove_worktree, list_worktrees
 
@@ -49,7 +47,7 @@ class TestListWorktrees:
         mock_run.return_value = MagicMock(
             returncode=0,
             stdout="worktree /tmp/main\nHEAD abc123\nbranch refs/heads/main\n\n"
-                   "worktree /tmp/feat\nHEAD def456\ndetached\n",
+            "worktree /tmp/feat\nHEAD def456\ndetached\n",
         )
         wts = list_worktrees(Path("/tmp/repo"))
         assert len(wts) == 2

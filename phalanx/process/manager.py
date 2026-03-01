@@ -111,13 +111,19 @@ class ProcessManager:
         stream_log.write_text("")
 
         # Create tmux session
-        env = {}
+        kwargs = {}
         if working_dir:
-            env["start_directory"] = working_dir
+            kwargs["start_directory"] = working_dir
+
+        # Pass environment variables so agents know who they are
+        kwargs["environment"] = {
+            "PHALANX_TEAM_ID": team_id,
+            "PHALANX_AGENT_ID": agent_id,
+        }
 
         session = self.server.new_session(
             session_name=session_name,
-            **env,
+            **kwargs,
         )
 
         # Set up pipe-pane to capture all TUI output into stream.log
@@ -224,18 +230,26 @@ class ProcessManager:
         - Responding to prompts (e.g., workspace trust)
         - Any other keystroke injection
         """
+        pane = None
         proc = self._processes.get(agent_id)
-        if not proc:
-            logger.warning("Agent %s not found in process table", agent_id)
-            return False
+        if proc:
+            pane = proc.pane
 
-        pane = proc.pane
+        if pane is None:
+            # Fallback: try to find it in tmux sessions if not tracked in memory
+            # This handles cases where CLI commands are run in a separate process
+            for s in self.server.sessions:
+                if s.name and s.name.endswith(f"-{agent_id}"):
+                    if s.panes:
+                        pane = s.panes[0]
+                        break
+
         if pane is None:
             logger.warning("Agent %s has no active pane", agent_id)
             return False
 
         try:
-            pane.send_keys(keys, enter=enter)
+            pane.send_keys(keys, enter=enter, suppress_history=False)
             logger.debug("Sent keys to agent %s: %r", agent_id, keys[:100])
             return True
         except Exception as e:
@@ -247,26 +261,26 @@ class ProcessManager:
         agent_id: str,
         screen_checker=None,
     ) -> bool:
-        """Interrupt a busy agent with Ctrl+C Ctrl+C.
-
-        Sends C-c twice and waits up to INTERRUPT_WAIT_SECONDS for the
-        prompt to return. If screen_checker is provided, it's called with
-        the captured screen lines to determine if the prompt has returned.
-
-        Returns True if the prompt returned, False if it timed out.
-        """
+        """Interrupt a busy agent with Ctrl+C Ctrl+C."""
+        pane = None
         proc = self._processes.get(agent_id)
-        if not proc:
-            logger.warning("Agent %s not found for interrupt", agent_id)
-            return False
+        if proc:
+            pane = proc.pane
 
-        pane = proc.pane
+        if pane is None:
+            # Fallback for unconnected processes
+            for s in self.server.sessions:
+                if s.name and s.name.endswith(f"-{agent_id}"):
+                    if s.panes:
+                        pane = s.panes[0]
+                        break
+
         if pane is None:
             logger.warning("Agent %s has no active pane for interrupt", agent_id)
             return False
 
         # Send Ctrl+C twice
-        pane.send_keys("C-c", enter=False)
+        pane.send_keys("Escape", enter=False)  # claude uses esc to interrupt!
         time.sleep(0.3)
         pane.send_keys("C-c", enter=False)
 
@@ -305,7 +319,15 @@ class ProcessManager:
             self._kill_session(proc.session_name)
             logger.info("Killed agent %s (session %s)", agent_id, proc.session_name)
         else:
-            logger.debug("Agent %s not in process table for kill", agent_id)
+            # Fallback for separate CLI process
+            killed = False
+            for s in self.server.sessions:
+                if s.name and s.name.endswith(f"-{agent_id}"):
+                    self._kill_session(s.name)
+                    logger.info("Killed agent %s (session %s)", agent_id, s.name)
+                    killed = True
+            if not killed:
+                logger.debug("Agent %s not found for kill", agent_id)
 
     def capture_screen(self, agent_id: str) -> list[str] | None:
         """Capture the current tmux pane contents for an agent.

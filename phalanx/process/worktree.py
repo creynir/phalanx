@@ -64,11 +64,11 @@ def list_worktrees(repo_path: Path) -> list[dict[str, str]]:
         if line.startswith("worktree "):
             if current:
                 worktrees.append(current)
-            current = {"path": line[len("worktree "):]}
+            current = {"path": line[len("worktree ") :]}
         elif line.startswith("HEAD "):
-            current["head"] = line[len("HEAD "):]
+            current["head"] = line[len("HEAD ") :]
         elif line.startswith("branch "):
-            current["branch"] = line[len("branch "):]
+            current["branch"] = line[len("branch ") :]
         elif line == "detached":
             current["detached"] = "true"
     if current:

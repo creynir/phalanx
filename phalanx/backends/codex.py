@@ -25,14 +25,17 @@ class CodexBackend(AgentBackend):
         soul_file: Path | None = None,
         model: str | None = None,
         worktree: str | None = None,
+        auto_approve: bool = True,
     ) -> list[str]:
         cmd = [self.binary_name()]
+        if auto_approve:
+            cmd.extend(self.auto_approve_flags())
         if model:
             cmd += ["--model", model]
         if soul_file:
-            cmd += ["--prompt", f"@{soul_file} {prompt}"]
+            cmd.append(f"@{soul_file} {prompt}")
         else:
-            cmd += ["--prompt", prompt]
+            cmd.append(prompt)
         return cmd
 
     def build_resume_command(self, chat_id: str) -> list[str]:

@@ -18,7 +18,7 @@ class CursorBackend(AgentBackend):
         return "cursor"
 
     def binary_name(self) -> str:
-        return shutil.which("cursor") or "cursor"
+        return shutil.which("agent") or "agent"
 
     def build_start_command(
         self,
@@ -26,21 +26,25 @@ class CursorBackend(AgentBackend):
         soul_file: Path | None = None,
         model: str | None = None,
         worktree: str | None = None,
+        auto_approve: bool = True,
     ) -> list[str]:
         cmd = [self.binary_name()]
-        cmd += ["--force", "--trust"]
         if model:
             cmd += ["--model", model]
         if worktree:
             cmd += ["--worktree", worktree]
+        # In TUI mode, --trust and --force cannot be used. We must handle the trust prompt via our scraper/escalation.
         if soul_file:
-            cmd += ["--prompt", f"@{soul_file} {prompt}"]
+            # We don't prepend @ because we aren't using the file as the *entire* prompt,
+            # but we can try to feed it through if that's what's supported.
+            # Actually, `agent` CLI supports `@file task` where it loads the file and appends the rest of the prompt
+            cmd += [f"@{soul_file}", prompt]
         else:
-            cmd += ["--prompt", prompt]
+            cmd.append(prompt)
         return cmd
 
     def build_resume_command(self, chat_id: str) -> list[str]:
-        return [self.binary_name(), "--resume", chat_id, "--force", "--trust"]
+        return [self.binary_name(), "--resume", chat_id]
 
     def parse_chat_id(self, output: str) -> str | None:
         match = re.search(
@@ -65,4 +69,4 @@ class CursorBackend(AgentBackend):
         ]
 
     def auto_approve_flags(self) -> list[str]:
-        return ["--force", "--trust"]
+        return ["--yolo"]

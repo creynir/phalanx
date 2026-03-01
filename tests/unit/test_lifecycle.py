@@ -2,81 +2,81 @@
 
 from __future__ import annotations
 
-from unittest.mock import patch
-
-import pytest
-
-from phalanx.db import Database
-from phalanx.monitor.lifecycle import can_transition, transition_agent, check_agent_health
+from unittest.mock import patch, MagicMock
 
 
-class TestCanTransition:
-    def test_valid(self):
-        assert can_transition("pending", "running") is True
-        assert can_transition("running", "idle") is True
-        assert can_transition("running", "stalled") is True
-        assert can_transition("running", "dead") is True
-        assert can_transition("dead", "running") is True  # resume
-
-    def test_invalid(self):
-        assert can_transition("pending", "dead") is False
-        assert can_transition("failed", "running") is False
-        assert can_transition("idle", "stalled") is False
+from phalanx.monitor.lifecycle import run_monitor_loop
+from phalanx.monitor.stall import AgentState, StallEvent
 
 
-class TestTransitionAgent:
-    @pytest.fixture
-    def db(self, tmp_path):
-        d = Database(db_path=tmp_path / "test.db")
-        d.create_team("t1", "task", "cursor")
-        d.create_agent("a1", "t1", "worker", "task", "cursor")
-        d.update_agent("a1", status="running")
-        yield d
-        d.close()
+class TestRunMonitorLoop:
+    def test_exceeds_max_runtime(self):
+        pm = MagicMock()
+        hm = MagicMock()
+        sd = MagicMock()
 
-    def test_valid_transition(self, db):
-        assert transition_agent(db, "a1", "idle") is True
-        assert db.get_agent("a1")["status"] == "idle"
+        # Use a list of times to return, to simulate elapsed time without breaking logging
+        _times = [1000.0, 3000.0, 3000.0, 3000.0, 3000.0]
 
-    def test_invalid_transition(self, db):
-        assert transition_agent(db, "a1", "pending") is False
-        assert db.get_agent("a1")["status"] == "running"
+        def mock_time():
+            if _times:
+                return _times.pop(0)
+            return 3000.0
 
-    def test_missing_agent(self, db):
-        assert transition_agent(db, "nonexistent", "running") is False
+        with patch("time.time", side_effect=mock_time):
+            result = run_monitor_loop("a1", pm, hm, sd, max_runtime=1800, poll_interval=0)
 
+        assert result.final_state == "failed"
+        pm.kill_agent.assert_called_once_with("a1")
 
-class TestCheckAgentHealth:
-    @pytest.fixture
-    def db(self, tmp_path):
-        d = Database(db_path=tmp_path / "test.db")
-        d.create_team("t1", "task", "cursor")
-        d.create_agent("a1", "t1", "worker", "task", "cursor",
-                        tmux_session="phalanx-t1-a1")
-        d.update_agent("a1", status="running")
-        yield d
-        d.close()
+    @patch("time.sleep", return_value=None)
+    def test_agent_dead(self, mock_sleep):
+        pm = MagicMock()
+        hm = MagicMock()
+        sd = MagicMock()
+        sd.check_agent.return_value = StallEvent(state=AgentState.DEAD, agent_id="a1")
 
-    @patch("phalanx.monitor.lifecycle.session_exists", return_value=True)
-    def test_alive_agent(self, mock_exists, db):
-        status = check_agent_health(db, "a1")
-        assert status == "running"
+        result = run_monitor_loop("a1", pm, hm, sd, max_runtime=1800, poll_interval=0)
+        assert result.final_state == "dead"
 
-    @patch("phalanx.monitor.lifecycle.session_exists", return_value=False)
-    def test_dead_agent_no_artifact(self, mock_exists, db):
-        status = check_agent_health(db, "a1")
-        assert status == "dead"
+    @patch("time.sleep", return_value=None)
+    def test_agent_idle_timeout(self, mock_sleep):
+        pm = MagicMock()
+        hm = MagicMock()
+        sd = MagicMock()
+        sd.check_agent.return_value = StallEvent(state=AgentState.IDLE_TIMEOUT, agent_id="a1")
 
-    @patch("phalanx.monitor.lifecycle.session_exists", return_value=False)
-    def test_idle_agent_with_artifact(self, mock_exists, db):
-        db.update_agent("a1", artifact_status="success")
-        status = check_agent_health(db, "a1")
-        assert status == "idle"
+        result = run_monitor_loop("a1", pm, hm, sd, max_runtime=1800, poll_interval=0)
+        assert result.final_state == "suspended"
+        pm.kill_agent.assert_called_once_with("a1")
 
-    def test_already_dead(self, db):
-        db.update_agent("a1", status="dead")
-        status = check_agent_health(db, "a1")
-        assert status == "dead"
+    @patch("time.sleep", return_value=None)
+    def test_agent_blocked_on_prompt(self, mock_sleep):
+        pm = MagicMock()
+        hm = MagicMock()
+        sd = MagicMock()
+        sd.check_agent.return_value = StallEvent(
+            state=AgentState.BLOCKED_ON_PROMPT,
+            agent_id="a1",
+            prompt_type="workspace_trust",
+            screen_text="Trust this workspace?",
+        )
 
-    def test_missing_agent(self, db):
-        assert check_agent_health(db, "nonexistent") == "unknown"
+        result = run_monitor_loop("a1", pm, hm, sd, max_runtime=1800, poll_interval=0)
+        assert result.final_state == "blocked_on_prompt"
+        assert result.prompt_type == "workspace_trust"
+
+    @patch("time.sleep", return_value=None)
+    def test_agent_stalled_max_retries(self, mock_sleep):
+        pm = MagicMock()
+        hm = MagicMock()
+        sd = MagicMock()
+        sd.check_agent.return_value = StallEvent(state=AgentState.STALLED, agent_id="a1")
+        sd.get_retry_delay.return_value = 0
+
+        result = run_monitor_loop(
+            "a1", pm, hm, sd, max_runtime=1800, poll_interval=0, max_retries=2
+        )
+        assert result.final_state == "failed"
+        assert result.retry_count == 3
+        pm.kill_agent.assert_called_once_with("a1")

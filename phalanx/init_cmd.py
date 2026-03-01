@@ -6,12 +6,18 @@ import shutil
 import sys
 from pathlib import Path
 
-from phalanx.soul.loader import load_skill, load_cursor_rule
+
+def load_skill(backend: str) -> str:
+    """Load the universal skill body for the given backend."""
+    # We use the same skill body for all backends now.
+    skill_path = Path(__file__).parent / "soul" / "skill_body.md"
+    return skill_path.read_text(encoding="utf-8")
 
 
 def _print(msg: str) -> None:
     """Print and flush immediately — critical before os.execvp replaces the process."""
     print(msg, flush=True)
+
 
 HOME = Path.home()
 
@@ -60,7 +66,8 @@ def install_global_skill(backend: str) -> Path:
     if backend == "gemini" and shutil.which("gemini"):
         subprocess.run(
             ["gemini", "skills", "enable", "phalanx-orchestration"],
-            capture_output=True, timeout=15,
+            capture_output=True,
+            timeout=15,
         )
 
     return path
@@ -79,7 +86,7 @@ def _cursor_rule_is_current(workspace: Path) -> bool:
     path = _cursor_rule_path(workspace)
     if not path.exists():
         return False
-    return path.read_text().strip() == load_cursor_rule().strip()
+    return path.read_text().strip() == load_skill("cursor").strip()
 
 
 def _ensure_cursor_workspace_rule(workspace: Path) -> None:
@@ -94,13 +101,16 @@ def _ensure_cursor_workspace_rule(workspace: Path) -> None:
     path = _cursor_rule_path(workspace)
 
     if path.exists():
-        path.write_text(load_cursor_rule())
+        path.write_text(load_skill("cursor"))
         _print(f"Phalanx workspace rule updated: {path}")
         return
 
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(load_cursor_rule())
+    path.write_text(load_skill("cursor"))
     _print(f"Phalanx workspace rule added: {path}")
+
+
+# ── Workspace init (phalanx init) ──────────────────────────
 
 
 def check_and_prompt_skill(backend: str, workspace: Path | None = None) -> None:
@@ -153,6 +163,7 @@ def check_and_prompt_skill(backend: str, workspace: Path | None = None) -> None:
 
 
 # ── Workspace init (phalanx init) ──────────────────────────
+
 
 def write_cursor_skill(workspace: Path) -> Path:
     skill_dir = workspace / ".cursor" / "rules"
@@ -207,7 +218,8 @@ def init_workspace(workspace: Path) -> dict[str, list[str]]:
         writer = _SKILL_WRITERS.get(ide)
         if writer:
             path = writer(workspace)
-            created.append(f"{ide}: {path}")
+            if path:
+                created.append(f"{ide}: {path}")
 
     phalanx_dir = workspace / ".phalanx"
     phalanx_dir.mkdir(exist_ok=True)

@@ -25,19 +25,9 @@ def deliver_message(
     interrupt_if_busy: bool = True,
     message_dir: Path | None = None,
 ) -> bool:
-    """Deliver a message to an agent's tmux pane.
-
-    If the message is long, writes it to a file and sends the file path.
-    If interrupt_if_busy is True, sends Ctrl+C first to interrupt generation.
-
-    Returns True if the message was sent successfully.
-    """
+    """Deliver a message to an agent's tmux pane."""
     proc = process_manager.get_process(agent_id)
-    if proc is None:
-        logger.warning("Cannot deliver message: agent %s not found", agent_id)
-        return False
-
-    if not proc.is_alive():
+    if proc is not None and not proc.is_alive():
         logger.warning("Cannot deliver message: agent %s is dead", agent_id)
         return False
 

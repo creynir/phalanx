@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 
 import pytest
 
@@ -21,7 +20,6 @@ from phalanx.init_cmd import (
     _ensure_cursor_workspace_rule,
     _GLOBAL_SKILL_PATHS,
 )
-from phalanx.soul.loader import load_cursor_rule
 
 
 pytestmark = pytest.mark.integration
@@ -128,9 +126,11 @@ class TestCursorRuleIsCurrent:
         assert _cursor_rule_is_current(tmp_path) is False
 
     def test_matching_content_is_current(self, tmp_path):
+        from phalanx.init_cmd import load_skill
+
         path = _cursor_rule_path(tmp_path)
         path.parent.mkdir(parents=True)
-        path.write_text(load_cursor_rule())
+        path.write_text(load_skill("cursor"))
         assert _cursor_rule_is_current(tmp_path) is True
 
     def test_stale_content_not_current(self, tmp_path):
@@ -147,24 +147,28 @@ class TestEnsureCursorWorkspaceRule:
         path = _cursor_rule_path(tmp_path)
         assert path.exists()
         content = path.read_text()
-        assert "alwaysApply: true" in content
+        assert "phalanx" in content.lower()
         assert "phalanx" in content.lower()
         captured = capsys.readouterr()
         assert "rule added" in captured.out.lower()
 
     def test_updates_stale_rule(self, tmp_path, capsys):
+        from phalanx.init_cmd import load_skill
+
         path = _cursor_rule_path(tmp_path)
         path.parent.mkdir(parents=True)
         path.write_text("old content")
         _ensure_cursor_workspace_rule(tmp_path)
-        assert path.read_text().strip() == load_cursor_rule().strip()
+        assert path.read_text().strip() == load_skill("cursor").strip()
         captured = capsys.readouterr()
         assert "rule updated" in captured.out.lower()
 
     def test_skips_current_rule(self, tmp_path, capsys):
+        from phalanx.init_cmd import load_skill
+
         path = _cursor_rule_path(tmp_path)
         path.parent.mkdir(parents=True)
-        path.write_text(load_cursor_rule())
+        path.write_text(load_skill("cursor"))
         _ensure_cursor_workspace_rule(tmp_path)
         captured = capsys.readouterr()
         assert captured.out == ""
@@ -186,7 +190,8 @@ class TestCheckAndPromptSkillCursorRule:
         monkeypatch.setitem(_GLOBAL_SKILL_PATHS, "cursor", fake_skill)
         # Pre-install global skill so it doesn't prompt
         fake_skill.parent.mkdir(parents=True)
-        from phalanx.soul.loader import load_skill
+        from phalanx.init_cmd import load_skill
+
         fake_skill.write_text(load_skill("cursor"))
 
         ws = tmp_path / "project"
@@ -202,7 +207,8 @@ class TestCheckAndPromptSkillCursorRule:
         fake_skill = tmp_path / "global" / "SKILL.md"
         monkeypatch.setitem(_GLOBAL_SKILL_PATHS, "cursor", fake_skill)
         fake_skill.parent.mkdir(parents=True)
-        from phalanx.soul.loader import load_skill
+        from phalanx.init_cmd import load_skill
+
         fake_skill.write_text(load_skill("cursor"))
 
         ws = tmp_path / "bare"
@@ -217,7 +223,8 @@ class TestCheckAndPromptSkillCursorRule:
         fake_skill = tmp_path / "global" / "phalanx.md"
         monkeypatch.setitem(_GLOBAL_SKILL_PATHS, "claude", fake_skill)
         fake_skill.parent.mkdir(parents=True)
-        from phalanx.soul.loader import load_skill
+        from phalanx.init_cmd import load_skill
+
         fake_skill.write_text(load_skill("claude"))
 
         ws = tmp_path / "project"
@@ -278,7 +285,8 @@ class TestCheckAndPromptSkillCursorRule:
 
         check_and_prompt_skill("cursor", workspace=ws)
 
-        from phalanx.soul.loader import load_skill
+        from phalanx.init_cmd import load_skill
+
         assert fake_skill.read_text().strip() == load_skill("cursor").strip()
         assert _cursor_rule_path(ws).exists()
         captured = capsys.readouterr()

@@ -2,64 +2,93 @@
 
 from __future__ import annotations
 
-import os
 import time
 from pathlib import Path
 
-from phalanx.monitor.heartbeat import check_stream_log, is_agent_alive, detect_stall
+from phalanx.monitor.heartbeat import HeartbeatMonitor
 
 
-class TestCheckStreamLog:
-    def test_missing_file(self, tmp_path):
-        info = check_stream_log(tmp_path / "nonexistent.log")
-        assert info["exists"] is False
-        assert info["age_seconds"] == float("inf")
+class TestHeartbeatMonitor:
+    def test_register_and_check_new_file(self, tmp_path: Path):
+        monitor = HeartbeatMonitor(idle_timeout=60)
+        log_path = tmp_path / "stream.log"
+        log_path.write_text("initial output")
 
-    def test_existing_file(self, tmp_path):
-        log = tmp_path / "stream.log"
-        log.write_text("some output")
-        info = check_stream_log(log)
-        assert info["exists"] is True
-        assert info["size"] > 0
-        assert info["age_seconds"] < 5
+        monitor.register("agent-1", log_path)
+        state = monitor.get_state("agent-1")
+        assert state is not None
+        assert state.agent_id == "agent-1"
+        assert not state.is_stale()
 
+        # Check updates last_mtime, last_size, last_tail_hash
+        updated_state = monitor.check("agent-1")
+        assert updated_state is not None
+        assert updated_state.last_size > 0
+        assert updated_state.last_tail_hash != ""
 
-class TestIsAgentAlive:
-    def test_alive(self, tmp_path):
-        log = tmp_path / "stream.log"
-        log.write_text("output")
-        assert is_agent_alive(log, stall_seconds=180) is True
+    def test_check_missing_file(self, tmp_path: Path):
+        monitor = HeartbeatMonitor(idle_timeout=60)
+        log_path = tmp_path / "missing.log"
 
-    def test_missing(self, tmp_path):
-        assert is_agent_alive(tmp_path / "missing.log") is False
+        monitor.register("agent-1", log_path)
+        state = monitor.check("agent-1")
+        # Should not error, just returns current state without updating mtime
+        assert state is not None
+        assert state.last_size == 0
 
-    def test_stale(self, tmp_path):
-        log = tmp_path / "stream.log"
-        log.write_text("output")
-        old_time = time.time() - 300
-        os.utime(str(log), (old_time, old_time))
-        assert is_agent_alive(log, stall_seconds=180) is False
+    def test_detect_stale(self, tmp_path: Path):
+        monitor = HeartbeatMonitor(idle_timeout=1)  # Very short timeout
+        log_path = tmp_path / "stream.log"
+        log_path.write_text("initial")
 
+        monitor.register("agent-1", log_path)
+        monitor.check("agent-1")
 
-class TestDetectStall:
-    def test_no_stall_fresh_file(self, tmp_path):
-        log = tmp_path / "stream.log"
-        log.write_text("output")
-        assert detect_stall(log, stall_seconds=180) is False
+        # Manually backdate the heartbeat to force stale
+        state = monitor.get_state("agent-1")
+        state.last_heartbeat = time.time() - 5
 
-    def test_stall_old_file(self, tmp_path):
-        log = tmp_path / "stream.log"
-        log.write_text("output")
-        old_time = time.time() - 300
-        os.utime(str(log), (old_time, old_time))
-        assert detect_stall(log, stall_seconds=180) is True
+        assert state.is_stale()
+        assert "agent-1" in monitor.get_stale_agents()
 
-    def test_no_stall_missing_file(self, tmp_path):
-        assert detect_stall(tmp_path / "missing.log") is False
+    def test_file_updates_prevent_stale(self, tmp_path: Path):
+        monitor = HeartbeatMonitor(idle_timeout=1)
+        log_path = tmp_path / "stream.log"
+        log_path.write_text("initial")
 
-    def test_no_stall_empty_file(self, tmp_path):
-        log = tmp_path / "stream.log"
-        log.write_text("")
-        old_time = time.time() - 300
-        os.utime(str(log), (old_time, old_time))
-        assert detect_stall(log, stall_seconds=180) is False
+        monitor.register("agent-1", log_path)
+        monitor.check("agent-1")
+
+        state = monitor.get_state("agent-1")
+        state.last_heartbeat = time.time() - 5
+
+        # Modify file
+        log_path.write_text("initial\nmore output")
+
+        # Check should see modification and update heartbeat
+        monitor.check("agent-1")
+        assert not state.is_stale()
+        assert "agent-1" not in monitor.get_stale_agents()
+
+    def test_unregister(self, tmp_path: Path):
+        monitor = HeartbeatMonitor()
+        monitor.register("a1", tmp_path / "log")
+        assert monitor.get_state("a1") is not None
+
+        monitor.unregister("a1")
+        assert monitor.get_state("a1") is None
+        assert monitor.check("a1") is None
+
+    def test_check_all(self, tmp_path: Path):
+        monitor = HeartbeatMonitor()
+        monitor.register("a1", tmp_path / "log1")
+        monitor.register("a2", tmp_path / "log2")
+
+        (tmp_path / "log1").write_text("1")
+        (tmp_path / "log2").write_text("2")
+
+        results = monitor.check_all()
+        assert "a1" in results
+        assert "a2" in results
+        assert results["a1"].last_size > 0
+        assert results["a2"].last_size > 0

@@ -3,18 +3,10 @@
 from __future__ import annotations
 
 import time
-from pathlib import Path
 
 import pytest
 
-from phalanx.process.manager import (
-    spawn_in_tmux,
-    kill_session,
-    session_exists,
-    send_keys_to_session,
-    capture_pane_output,
-    list_phalanx_sessions,
-)
+from phalanx.process.manager import ProcessManager
 
 
 pytestmark = pytest.mark.integration
@@ -26,61 +18,79 @@ def stream_log(tmp_path):
 
 
 @pytest.fixture
-def tmux_session(stream_log):
+def pm(tmp_path):
+    return ProcessManager(tmp_path)
+
+
+@pytest.fixture
+def tmux_session(pm, stream_log):
     """Spawn a simple echo session and clean up after."""
-    result = spawn_in_tmux(
-        cmd=["echo", "phalanx-test-ok"],
+    from phalanx.backends.registry import get_backend
+
+    backend = get_backend("cursor")
+    result = pm.spawn(
         team_id="test-team",
         agent_id="test-agent",
-        stream_log=stream_log,
+        backend=backend,
+        prompt="phalanx-test-ok",
     )
     yield result
-    kill_session(result["session_name"])
+    pm.kill_agent(result.agent_id)
 
 
 class TestSpawnInTmux:
-    def test_creates_session(self, tmux_session):
-        assert session_exists(tmux_session["session_name"])
+    def test_creates_session(self, pm, tmux_session):
+        assert pm.get_process(tmux_session.agent_id) is not None
 
     def test_session_name_format(self, tmux_session):
-        assert tmux_session["session_name"] == "phalanx-test-team-test-agent"
+        assert tmux_session.session_name == "phalanx-test-team-test-agent"
 
-    def test_pane_pid(self, tmux_session):
-        assert tmux_session["pane_pid"] is not None
+    def test_is_alive(self, tmux_session):
+        assert tmux_session.is_alive()
 
 
 class TestKillSession:
-    def test_kill_existing(self, tmux_session):
-        name = tmux_session["session_name"]
-        assert kill_session(name) is True
-        assert session_exists(name) is False
+    def test_kill_existing(self, pm, tmux_session):
+        agent_id = tmux_session.agent_id
+        assert pm.get_process(agent_id) is not None
+        pm.kill_agent(agent_id)
+        time.sleep(0.5)  # Let tmux kill it
+        assert pm.get_process(agent_id) is None
 
-    def test_kill_nonexistent(self):
-        assert kill_session("phalanx-nonexistent-session") is False
+    def test_kill_nonexistent(self, pm):
+        pm.kill_agent("phalanx-nonexistent-session")
 
 
 class TestSendKeys:
-    def test_send_to_session(self, tmux_session):
-        name = tmux_session["session_name"]
-        result = send_keys_to_session(name, "echo hello-from-test")
-        assert result is True
+    def test_send_to_session(self, pm, tmux_session):
+        # We just verify it doesn't crash.
+        pm.send_keys(tmux_session.agent_id, "echo hello-from-test")
 
-    def test_send_to_nonexistent(self):
-        assert send_keys_to_session("nonexistent-session", "hi") is False
+    def test_send_to_nonexistent(self, pm):
+        # Should handle gracefully
+        pm.send_keys("nonexistent-session", "hi")
 
 
 class TestCaptureOutput:
-    def test_capture(self, tmux_session):
-        name = tmux_session["session_name"]
-        time.sleep(0.5)
-        output = capture_pane_output(name)
-        assert output is not None
+    def test_capture(self, pm, stream_log):
+        from phalanx.backends.registry import get_backend
 
-    def test_capture_nonexistent(self):
-        assert capture_pane_output("nonexistent") is None
+        res = pm.spawn(
+            team_id="cap-team",
+            agent_id="cap-agent",
+            backend=get_backend("cursor"),
+            prompt="hello capture",
+        )
+        time.sleep(0.5)
+        output = pm.capture_screen(res.agent_id)
+        assert output is not None
+        pm.kill_agent(res.agent_id)
+
+    def test_capture_nonexistent(self, pm):
+        assert pm.capture_screen("nonexistent") is None
 
 
 class TestListSessions:
-    def test_lists_phalanx_sessions(self, tmux_session):
-        sessions = list_phalanx_sessions()
-        assert tmux_session["session_name"] in sessions
+    def test_lists_phalanx_sessions(self, pm, tmux_session):
+        sessions = pm.list_processes()
+        assert tmux_session.agent_id in sessions

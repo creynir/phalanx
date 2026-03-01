@@ -1,55 +1,95 @@
-"""Tests for stall detection and retry."""
+"""Tests for stall detection and TUI screen scraping."""
 
 from __future__ import annotations
 
-from unittest.mock import patch
-
-import pytest
-
-from phalanx.db import Database
-from phalanx.monitor.stall import compute_backoff, handle_stall
+from unittest.mock import MagicMock
 
 
-class TestComputeBackoff:
-    def test_first_attempt(self):
-        assert compute_backoff(0) == 30
-
-    def test_second_attempt(self):
-        assert compute_backoff(1) == 60
-
-    def test_capped(self):
-        assert compute_backoff(10) == 300
-
-    def test_custom_base(self):
-        assert compute_backoff(0, base=10) == 10
+from phalanx.monitor.stall import (
+    StallDetector,
+    AgentState,
+    _check_workspace_trust,
+    _check_permission_prompt,
+    _check_tool_approval,
+    _check_error_prompt,
+    _check_agent_idle,
+)
 
 
-class TestHandleStall:
-    @pytest.fixture
-    def db(self, tmp_path):
-        d = Database(db_path=tmp_path / "test.db")
-        d.create_team("t1", "task", "cursor")
-        d.create_agent("a1", "t1", "worker", "task", "cursor",
-                        tmux_session="phalanx-t1-a1", max_retries=3)
-        yield d
-        d.close()
+class TestPromptPatterns:
+    def test_workspace_trust(self):
+        assert _check_workspace_trust(["Workspace Trust", "Do you trust this?"])
+        assert _check_workspace_trust(["Trust this workspace", "Press [y] to accept"])
+        assert not _check_workspace_trust(["Just some normal text"])
 
-    @patch("phalanx.monitor.stall.kill_session")
-    def test_retry_on_first_stall(self, mock_kill, db):
-        result = handle_stall(db, "a1", "t1")
-        assert result == "retrying"
-        agent = db.get_agent("a1")
-        assert agent["attempts"] == 1
-        assert agent["status"] == "stalled"
+    def test_permission_prompt(self):
+        assert _check_permission_prompt(["Allow", "this operation?"])
+        assert _check_permission_prompt(["[y/N]"])
+        assert not _check_permission_prompt(["Proceeding with operation..."])
 
-    @patch("phalanx.monitor.stall.kill_session")
-    def test_fail_after_max_retries(self, mock_kill, db):
-        db.update_agent("a1", attempts=2)
-        result = handle_stall(db, "a1", "t1")
-        assert result == "failed"
-        assert db.get_agent("a1")["status"] == "failed"
+    def test_tool_approval(self):
+        assert _check_tool_approval(["Run python test.py ? ["])
+        assert _check_tool_approval(["Execute bash ? [y/N]"])
+        assert not _check_tool_approval(["Running python test.py"])
 
-    @patch("phalanx.monitor.stall.kill_session")
-    def test_missing_agent(self, mock_kill, db):
-        result = handle_stall(db, "nonexistent", "t1")
-        assert result == "failed"
+    def test_error_prompt(self):
+        assert _check_error_prompt(["retry [R]"])
+        assert _check_error_prompt(["abort (A)"])
+        assert not _check_error_prompt(["Operation failed."])
+
+    def test_agent_idle(self):
+        assert _check_agent_idle(["❯"])
+        assert _check_agent_idle(["? for shortcuts"])
+        assert not _check_agent_idle(["Working..."])
+
+
+class TestStallDetector:
+    def test_check_agent_dead(self):
+        pm = MagicMock()
+        hm = MagicMock()
+        pm.get_process.return_value = None
+        hm.check.return_value = MagicMock()
+
+        sd = StallDetector(pm, hm)
+        event = sd.check_agent("a1")
+        assert event is not None
+        assert event.state == AgentState.DEAD
+
+    def test_check_agent_idle_timeout(self):
+        pm = MagicMock()
+        hm = MagicMock()
+        hb_state = MagicMock()
+        hb_state.is_stale.return_value = True
+        hm.check.return_value = hb_state
+        pm.get_process.return_value.is_alive.return_value = True
+
+        sd = StallDetector(pm, hm)
+        event = sd.check_agent("a1")
+        assert event is not None
+        assert event.state == AgentState.IDLE_TIMEOUT
+
+    def test_check_agent_blocked_on_prompt(self):
+        pm = MagicMock()
+        hm = MagicMock()
+        hb_state = MagicMock()
+        hb_state.is_stale.return_value = False
+        hm.check.return_value = hb_state
+        pm.get_process.return_value.is_alive.return_value = True
+        pm.capture_screen.return_value = ["Allow this operation?"]
+
+        sd = StallDetector(pm, hm, check_interval=0)
+
+        event = sd.check_agent("a1")
+        assert event is not None
+        assert event.state == AgentState.BLOCKED_ON_PROMPT
+        assert event.prompt_type == "permission_prompt"
+
+    def test_retry_backoff(self):
+        sd = StallDetector(MagicMock(), MagicMock())
+        assert sd.get_retry_delay("a1") == 5
+        sd.record_retry("a1")
+        assert sd.get_retry_delay("a1") == 10
+        sd.record_retry("a1")
+        assert sd.get_retry_delay("a1") == 20
+        sd.reset_retries("a1")
+        assert sd.get_retry_delay("a1") == 5

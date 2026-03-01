@@ -709,6 +709,8 @@ def status_cmd(ctx):
 @click.pass_context
 def init_cmd(ctx):
     """Initialize .phalanx/ in the current workspace."""
+    from phalanx.init_cmd import init_workspace
+
     root = _get_root(ctx)
     root.mkdir(parents=True, exist_ok=True)
 
@@ -723,8 +725,13 @@ def init_cmd(ctx):
     # Initialize DB
     _get_db(root)
 
+    workspace_dir = root.parent
+    result = init_workspace(workspace_dir)
+
     click.echo(f"Initialized phalanx at {root}")
     click.echo("  Created: config.json, state.db, soul/")
+    for skill in result.get("skills_created", []):
+        click.echo(f"  Created skill: {skill}")
 
 
 # ── gc ───────────────────────────────────────────────────────────────
