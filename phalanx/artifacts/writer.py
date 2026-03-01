@@ -1,63 +1,61 @@
-"""Atomic artifact writer — used by agents via `phalanx write-artifact`."""
+"""Atomic artifact writer.
+
+Agents call `phalanx write-artifact` which goes through this module
+to ensure schema validity, atomic writes, and DB consistency.
+"""
 
 from __future__ import annotations
 
+import json
 import os
 import tempfile
 from pathlib import Path
-from typing import Any
 
-from .schema import Artifact, ArtifactStatus
-
-
-TEAMS_DIR = Path.home() / ".phalanx" / "teams"
-
-
-def get_artifact_path(team_id: str, agent_id: str) -> Path:
-    return TEAMS_DIR / team_id / "agents" / agent_id / "artifact.json"
-
-
-def get_stream_log_path(team_id: str, agent_id: str) -> Path:
-    return TEAMS_DIR / team_id / "agents" / agent_id / "stream.log"
+from phalanx.artifacts.schema import Artifact
 
 
 def write_artifact(
-    status: str,
-    output: dict[str, Any],
-    team_id: str | None = None,
-    agent_id: str | None = None,
-    warnings: list[str] | None = None,
-) -> Artifact:
-    """Validate and atomically write an artifact to disk.
+    artifact_dir: Path,
+    artifact: Artifact,
+    db=None,
+) -> Path:
+    """Atomically write an artifact to disk and update DB.
 
-    Reads PHALANX_TEAM_ID and PHALANX_AGENT_ID from env if not provided.
+    Uses tmp-file + rename for crash safety.
     """
-    team_id = team_id or os.environ.get("PHALANX_TEAM_ID", "")
-    agent_id = agent_id or os.environ.get("PHALANX_AGENT_ID", "")
+    errors = artifact.validate()
+    if errors:
+        raise ValueError(f"Invalid artifact: {'; '.join(errors)}")
 
-    if not team_id or not agent_id:
-        raise ValueError("team_id and agent_id are required (set env or pass explicitly)")
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+    target = artifact_dir / "artifact.json"
 
-    artifact = Artifact(
-        status=ArtifactStatus(status),
-        agent_id=agent_id,
-        team_id=team_id,
-        output=output,
-        warnings=warnings or [],
+    # Atomic write: write to temp, then rename
+    fd, tmp_path = tempfile.mkstemp(
+        dir=str(artifact_dir),
+        suffix=".tmp",
+        prefix="artifact_",
     )
-
-    path = get_artifact_path(team_id, agent_id)
-    path.parent.mkdir(parents=True, exist_ok=True)
-
-    # Atomic write: write to temp file then rename
-    fd, tmp_path = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp")
     try:
-        with os.fdopen(fd, "w") as f:
-            f.write(artifact.model_dump_json(indent=2))
-        os.replace(tmp_path, str(path))
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(artifact.to_dict(), f, indent=2, ensure_ascii=False)
+            f.write("\n")
+        os.replace(tmp_path, str(target))
     except Exception:
-        if os.path.exists(tmp_path):
+        try:
             os.unlink(tmp_path)
+        except OSError:
+            pass
         raise
 
-    return artifact
+    # Update DB if available
+    if db and artifact.agent_id:
+        try:
+            db.update_agent(
+                artifact.agent_id,
+                artifact_status=artifact.status,
+            )
+        except Exception:
+            pass
+
+    return target

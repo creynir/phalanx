@@ -1,97 +1,62 @@
-"""Team orchestration: status, stop, resume operations."""
+"""Team orchestration: status, stop, result reading."""
 
 from __future__ import annotations
 
-from typing import Any
+import logging
+from pathlib import Path
 
-from phalanx.db import Database
-from phalanx.process.manager import kill_session, session_exists
-from phalanx.artifacts.reader import read_team_result, list_artifacts
-from phalanx.comms.file_lock import release_agent_locks
-from phalanx.monitor.lifecycle import check_agent_health
+from phalanx.artifacts.reader import read_agent_artifact, read_team_artifact
+from phalanx.db import StateDB
+from phalanx.process.manager import ProcessManager
+
+logger = logging.getLogger(__name__)
 
 
-def get_team_status(db: Database, team_id: str) -> dict[str, Any]:
+def get_team_status(db: StateDB, team_id: str) -> dict | None:
     """Get comprehensive team status including all agents."""
     team = db.get_team(team_id)
     if team is None:
-        return {"error": f"Team {team_id} not found"}
+        return None
 
-    agents = db.list_agents(team_id=team_id)
-    for agent in agents:
-        check_agent_health(db, agent["id"])
-
-    # Re-fetch after health checks
-    agents = db.list_agents(team_id=team_id)
-
-    agent_summaries = []
-    for a in agents:
-        summary = {
-            "id": a["id"],
-            "role": a["role"],
-            "status": a["status"],
-            "model": a["model"],
-            "artifact_status": a["artifact_status"],
-        }
-        agent_summaries.append(summary)
-
-    all_done = all(
-        a["status"] in ("idle", "dead", "failed")
-        for a in agents
-        if a["role"] != "lead"
-    )
-    lead_done = any(
-        a["artifact_status"] is not None
-        for a in agents
-        if a["role"] == "lead"
-    )
-
-    team_status = "running"
-    if all_done and lead_done:
-        team_status = "completed"
-        db.update_team(team_id, status="completed")
-    elif all(a["status"] == "failed" for a in agents if a["role"] != "lead"):
-        team_status = "failed"
-        db.update_team(team_id, status="failed")
-
+    agents = db.list_agents(team_id)
     return {
-        "team_id": team_id,
-        "task": team["task"],
-        "status": team_status,
-        "backend": team["backend"],
-        "agents": agent_summaries,
-        "artifacts_count": sum(1 for a in agents if a["artifact_status"]),
+        "team": team,
+        "agents": agents,
+        "agent_count": len(agents),
+        "running_count": sum(1 for a in agents if a["status"] == "running"),
     }
 
 
-def stop_team(db: Database, team_id: str) -> dict[str, Any]:
-    """Stop all agents in a team. Data preserved for resume."""
-    agents = db.list_agents(team_id=team_id)
-    killed = 0
-
+def stop_team(
+    db: StateDB,
+    process_manager: ProcessManager,
+    team_id: str,
+) -> dict:
+    """Stop all agents in a team. Data is preserved for resuming."""
+    agents = db.list_agents(team_id)
+    stopped = []
     for agent in agents:
-        if agent["tmux_session"] and session_exists(agent["tmux_session"]):
-            kill_session(agent["tmux_session"])
-            killed += 1
-        release_agent_locks(db, agent["id"])
-        db.update_agent(agent["id"], status="dead")
+        if agent["status"] in ("running", "pending"):
+            process_manager.kill_agent(agent["id"])
+            db.update_agent(agent["id"], status="dead")
+            stopped.append(agent["id"])
 
-    db.update_team(team_id, status="dead")
-    db.insert_event("team_stopped", team_id=team_id, payload={"killed": killed})
-
-    return {"team_id": team_id, "status": "dead", "agents_killed": killed}
+    db.update_team_status(team_id, "dead")
+    logger.info("Stopped team %s (%d agents killed)", team_id, len(stopped))
+    return {"team_id": team_id, "stopped_agents": stopped}
 
 
-def get_team_result(db: Database, team_id: str) -> dict[str, Any] | None:
-    """Read the team lead's consolidated artifact."""
-    result = read_team_result(team_id)
-    if result:
-        return result.model_dump()
+def get_team_result(phalanx_root: Path, team_id: str) -> dict | None:
+    """Read the team lead's artifact."""
+    artifact = read_team_artifact(phalanx_root, team_id)
+    if artifact:
+        return artifact.to_dict()
+    return None
 
-    artifacts = list_artifacts(team_id)
-    if artifacts:
-        return {
-            "status": "partial",
-            "artifacts": [a.model_dump() for a in artifacts],
-        }
+
+def get_agent_result(phalanx_root: Path, team_id: str, agent_id: str) -> dict | None:
+    """Read a specific agent's artifact."""
+    artifact = read_agent_artifact(phalanx_root, team_id, agent_id)
+    if artifact:
+        return artifact.to_dict()
     return None

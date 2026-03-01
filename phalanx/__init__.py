@@ -1,3 +1,3 @@
-"""Phalanx — open-source, vendor-agnostic multi-agent orchestration CLI."""
+"""Phalanx — Multi-Agent Orchestration System."""
 
-__version__ = "0.1.1"
+__version__ = "0.2.0"

@@ -1,50 +1,76 @@
-"""Message delivery to agents via tmux send_keys."""
+"""Message delivery to agents via tmux send-keys.
+
+For TUI-mode agents, messages are delivered by typing into the tmux pane.
+If the agent is busy (generating), it's first interrupted with Ctrl+C.
+Long messages are written to a file and the file path is sent instead.
+"""
 
 from __future__ import annotations
 
-import re
+import logging
 import tempfile
 from pathlib import Path
 
-from phalanx.process.manager import send_keys_to_session
+from phalanx.process.manager import ProcessManager
 
-LONG_MESSAGE_THRESHOLD = 500
+logger = logging.getLogger(__name__)
 
-# tmux send_keys interprets C-* and M-* as control/meta sequences.
-# Strip or escape anything that could be interpreted as a tmux special key.
-_TMUX_ESCAPE_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
-
-
-def _sanitize_for_sendkeys(text: str) -> str:
-    """Remove control characters that tmux could interpret as commands."""
-    return _TMUX_ESCAPE_RE.sub("", text)
+LONG_MESSAGE_THRESHOLD = 500  # chars — beyond this, use file-based delivery
 
 
 def deliver_message(
-    session_name: str,
+    process_manager: ProcessManager,
+    agent_id: str,
     message: str,
-    team_dir: Path | None = None,
+    interrupt_if_busy: bool = True,
+    message_dir: Path | None = None,
 ) -> bool:
-    """Send a message to an agent's tmux pane.
+    """Deliver a message to an agent's tmux pane.
 
-    Short messages are sent directly (sanitized). Long messages (>500 chars)
-    are written to a file to avoid character dropping in send_keys.
+    If the message is long, writes it to a file and sends the file path.
+    If interrupt_if_busy is True, sends Ctrl+C first to interrupt generation.
+
+    Returns True if the message was sent successfully.
     """
-    if len(message) <= LONG_MESSAGE_THRESHOLD:
-        return send_keys_to_session(session_name, _sanitize_for_sendkeys(message))
+    proc = process_manager.get_process(agent_id)
+    if proc is None:
+        logger.warning("Cannot deliver message: agent %s not found", agent_id)
+        return False
 
-    # Long messages always go through file to avoid injection and dropping
-    if team_dir is None:
-        team_dir = Path(tempfile.gettempdir())
+    if not proc.is_alive():
+        logger.warning("Cannot deliver message: agent %s is dead", agent_id)
+        return False
 
-    msg_dir = team_dir / "messages"
-    msg_dir.mkdir(parents=True, exist_ok=True)
+    # Interrupt if busy
+    if interrupt_if_busy:
+        prompt_returned = process_manager.interrupt_agent(agent_id)
+        if not prompt_returned:
+            logger.warning(
+                "Agent %s did not return to prompt after interrupt; message delivery may fail",
+                agent_id,
+            )
 
-    msg_file = tempfile.NamedTemporaryFile(
-        dir=str(msg_dir), suffix=".md", delete=False, mode="w",
-    )
-    msg_file.write(message)
-    msg_file.close()
+    # Long messages: write to file
+    if len(message) > LONG_MESSAGE_THRESHOLD:
+        return _deliver_via_file(process_manager, agent_id, message, message_dir)
 
-    instruction = f"Read the message at {msg_file.name} and follow the instructions within."
-    return send_keys_to_session(session_name, _sanitize_for_sendkeys(instruction))
+    # Short messages: send directly
+    return process_manager.send_keys(agent_id, message, enter=True)
+
+
+def _deliver_via_file(
+    process_manager: ProcessManager,
+    agent_id: str,
+    message: str,
+    message_dir: Path | None = None,
+) -> bool:
+    """Write message to a temp file and send the path to the agent."""
+    if message_dir is None:
+        message_dir = Path(tempfile.gettempdir()) / "phalanx_messages"
+    message_dir.mkdir(parents=True, exist_ok=True)
+
+    msg_file = message_dir / f"msg_{agent_id}_{hash(message) & 0xFFFFFFFF:08x}.txt"
+    msg_file.write_text(message, encoding="utf-8")
+
+    delivery_text = f"Read the message at: {msg_file}"
+    return process_manager.send_keys(agent_id, delivery_text, enter=True)

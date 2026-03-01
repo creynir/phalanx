@@ -1,57 +1,180 @@
-"""Agent lifecycle state machine."""
+"""Agent lifecycle state machine and monitor loop.
+
+Runs as a blocking command (`phalanx monitor <agent-id>`) that watches
+an agent through its entire lifecycle, handling stalls, prompts,
+retries, and completion.
+"""
 
 from __future__ import annotations
 
-from phalanx.db import Database
-from phalanx.process.manager import session_exists
+import logging
+import time
+from dataclasses import dataclass
 
-VALID_TRANSITIONS = {
-    "pending":  {"running"},
-    "running":  {"idle", "stalled", "dead", "failed"},
-    "idle":     {"dead", "running"},
-    "stalled":  {"running", "failed", "dead"},
-    "dead":     {"running"},  # resume
-    "failed":   set(),        # terminal
-}
+from phalanx.monitor.heartbeat import HeartbeatMonitor
+from phalanx.monitor.stall import AgentState, StallDetector
+from phalanx.process.manager import ProcessManager
 
+logger = logging.getLogger(__name__)
 
-def can_transition(current: str, target: str) -> bool:
-    return target in VALID_TRANSITIONS.get(current, set())
+MONITOR_POLL_INTERVAL = 20  # seconds
 
 
-def transition_agent(db: Database, agent_id: str, new_status: str, **extra) -> bool:
-    """Attempt a state transition. Returns True if valid and applied."""
-    agent = db.get_agent(agent_id)
-    if agent is None:
-        return False
+@dataclass
+class MonitorResult:
+    """Result of monitoring an agent to completion."""
 
-    current = agent["status"]
-    if not can_transition(current, new_status):
-        return False
+    agent_id: str
+    final_state: str
+    artifact_status: str | None = None
+    screen_text: str = ""
+    prompt_type: str = ""
+    retry_count: int = 0
+    elapsed_seconds: float = 0.0
 
-    db.update_agent(agent_id, status=new_status, **extra)
-    return True
+    def to_dict(self) -> dict:
+        return {
+            "agent_id": self.agent_id,
+            "status": self.final_state,
+            "artifact_status": self.artifact_status,
+            "retry_count": self.retry_count,
+            "elapsed_seconds": round(self.elapsed_seconds, 1),
+        }
 
 
-def check_agent_health(db: Database, agent_id: str) -> str:
-    """Check if an agent's tmux session is still alive and update status accordingly.
+def run_monitor_loop(
+    agent_id: str,
+    process_manager: ProcessManager,
+    heartbeat_monitor: HeartbeatMonitor,
+    stall_detector: StallDetector,
+    max_retries: int = 3,
+    max_runtime: int = 1800,
+    poll_interval: int = MONITOR_POLL_INTERVAL,
+    on_blocked: callable | None = None,
+    on_stall: callable | None = None,
+) -> MonitorResult:
+    """Blocking DEM-style monitoring loop for a single agent.
 
-    Returns the current/new status.
+    Periodically checks heartbeat and screen state. Handles:
+    - Stall detection → kill + retry with backoff
+    - Blocked on prompt → callback to escalate
+    - Idle timeout (30m) → kill + mark suspended
+    - Agent death → mark dead
+    - Max runtime exceeded → kill + mark failed
+
+    Args:
+        on_blocked: Called with (agent_id, StallEvent) when blocked on prompt.
+                    If it returns True, monitoring continues. False stops.
+        on_stall: Called with (agent_id, StallEvent) when stalled.
+                  Return True to retry, False to give up.
     """
-    agent = db.get_agent(agent_id)
-    if agent is None:
-        return "unknown"
+    start_time = time.time()
+    retry_count = 0
 
-    if agent["status"] in ("dead", "failed", "pending"):
-        return agent["status"]
+    while True:
+        elapsed = time.time() - start_time
 
-    tmux_session = agent.get("tmux_session")
-    if tmux_session and not session_exists(tmux_session):
-        if agent.get("artifact_status"):
-            transition_agent(db, agent_id, "idle")
-            return "idle"
-        else:
-            transition_agent(db, agent_id, "dead")
-            return "dead"
+        if elapsed > max_runtime:
+            logger.warning(
+                "Agent %s exceeded max runtime of %ds",
+                agent_id,
+                max_runtime,
+            )
+            process_manager.kill_agent(agent_id)
+            return MonitorResult(
+                agent_id=agent_id,
+                final_state="failed",
+                retry_count=retry_count,
+                elapsed_seconds=elapsed,
+            )
 
-    return agent["status"]
+        event = stall_detector.check_agent(agent_id)
+
+        if event is None:
+            time.sleep(poll_interval)
+            continue
+
+        if event.state == AgentState.DEAD:
+            logger.info("Agent %s is dead", agent_id)
+            return MonitorResult(
+                agent_id=agent_id,
+                final_state="dead",
+                retry_count=retry_count,
+                elapsed_seconds=time.time() - start_time,
+            )
+
+        if event.state == AgentState.BLOCKED_ON_PROMPT:
+            logger.info(
+                "Agent %s blocked on prompt: %s",
+                agent_id,
+                event.prompt_type,
+            )
+            if on_blocked:
+                should_continue = on_blocked(agent_id, event)
+                if not should_continue:
+                    return MonitorResult(
+                        agent_id=agent_id,
+                        final_state="blocked_on_prompt",
+                        screen_text=event.screen_text,
+                        prompt_type=event.prompt_type,
+                        retry_count=retry_count,
+                        elapsed_seconds=time.time() - start_time,
+                    )
+            else:
+                return MonitorResult(
+                    agent_id=agent_id,
+                    final_state="blocked_on_prompt",
+                    screen_text=event.screen_text,
+                    prompt_type=event.prompt_type,
+                    retry_count=retry_count,
+                    elapsed_seconds=time.time() - start_time,
+                )
+
+        if event.state == AgentState.IDLE_TIMEOUT:
+            logger.warning("Agent %s hit idle timeout", agent_id)
+            process_manager.kill_agent(agent_id)
+            return MonitorResult(
+                agent_id=agent_id,
+                final_state="suspended",
+                retry_count=retry_count,
+                elapsed_seconds=time.time() - start_time,
+            )
+
+        if event.state == AgentState.STALLED:
+            retry_count += 1
+            if retry_count > max_retries:
+                logger.error(
+                    "Agent %s stalled %d times, giving up",
+                    agent_id,
+                    retry_count,
+                )
+                process_manager.kill_agent(agent_id)
+                return MonitorResult(
+                    agent_id=agent_id,
+                    final_state="failed",
+                    retry_count=retry_count,
+                    elapsed_seconds=time.time() - start_time,
+                )
+
+            logger.warning(
+                "Agent %s stalled (attempt %d/%d), retrying...",
+                agent_id,
+                retry_count,
+                max_retries,
+            )
+            if on_stall:
+                should_retry = on_stall(agent_id, event)
+                if not should_retry:
+                    return MonitorResult(
+                        agent_id=agent_id,
+                        final_state="failed",
+                        retry_count=retry_count,
+                        elapsed_seconds=time.time() - start_time,
+                    )
+
+            delay = stall_detector.get_retry_delay(agent_id)
+            stall_detector.record_retry(agent_id)
+            logger.info("Waiting %.1fs before retry...", delay)
+            time.sleep(delay)
+
+        time.sleep(poll_interval)

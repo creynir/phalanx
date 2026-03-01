@@ -1,47 +1,39 @@
-"""Read artifacts written by agents."""
+"""Read agent and team artifacts."""
 
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
-from .schema import Artifact
-from .writer import get_artifact_path, TEAMS_DIR
+from phalanx.artifacts.schema import Artifact
 
 
-def read_artifact(team_id: str, agent_id: str) -> Artifact | None:
-    """Read and validate an agent's artifact. Returns None if not found."""
-    path = get_artifact_path(team_id, agent_id)
+def read_artifact(artifact_dir: Path) -> Artifact | None:
+    """Read an artifact from a directory."""
+    path = artifact_dir / "artifact.json"
     if not path.exists():
         return None
-    data = json.loads(path.read_text())
-    return Artifact(**data)
-
-
-def read_team_result(team_id: str) -> Artifact | None:
-    """Read the team lead's artifact (the consolidated team result)."""
-    team_dir = TEAMS_DIR / team_id / "agents"
-    if not team_dir.exists():
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return Artifact.from_dict(data)
+    except (json.JSONDecodeError, TypeError, KeyError):
         return None
 
-    for agent_dir in team_dir.iterdir():
-        artifact_path = agent_dir / "artifact.json"
-        if artifact_path.exists():
-            data = json.loads(artifact_path.read_text())
-            if data.get("agent_id", "").startswith("lead"):
-                return Artifact(**data)
-    return None
+
+def read_agent_artifact(
+    phalanx_root: Path,
+    team_id: str,
+    agent_id: str,
+) -> Artifact | None:
+    """Read a specific agent's artifact."""
+    agent_dir = phalanx_root / "teams" / team_id / "agents" / agent_id
+    return read_artifact(agent_dir)
 
 
-def list_artifacts(team_id: str) -> list[Artifact]:
-    """List all artifacts for a team."""
-    team_dir = TEAMS_DIR / team_id / "agents"
-    if not team_dir.exists():
-        return []
-
-    artifacts = []
-    for agent_dir in sorted(team_dir.iterdir()):
-        artifact_path = agent_dir / "artifact.json"
-        if artifact_path.exists():
-            data = json.loads(artifact_path.read_text())
-            artifacts.append(Artifact(**data))
-    return artifacts
+def read_team_artifact(
+    phalanx_root: Path,
+    team_id: str,
+) -> Artifact | None:
+    """Read the team lead's artifact."""
+    lead_dir = phalanx_root / "teams" / team_id / "lead"
+    return read_artifact(lead_dir)

@@ -1,31 +1,42 @@
-"""Artifact Pydantic models and validation."""
+"""Artifact schema definition and validation."""
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from enum import Enum
-from typing import Any
-
-from pydantic import BaseModel, Field
+import json
+import time
+from dataclasses import asdict, dataclass, field
 
 
-class ArtifactStatus(str, Enum):
-    SUCCESS = "success"
-    FAILURE = "failure"
-    ESCALATION = "escalation_required"
+@dataclass
+class Artifact:
+    """Structured work product from an agent."""
 
+    status: str  # success, failure, escalation_required
+    output: dict | str = field(default_factory=dict)
+    warnings: list[str] = field(default_factory=list)
+    agent_id: str = ""
+    team_id: str = ""
+    created_at: float = field(default_factory=time.time)
 
-class TokenUsage(BaseModel):
-    input_tokens: int = 0
-    output_tokens: int = 0
-    total_cost_usd: float = 0.0
+    VALID_STATUSES = ("success", "failure", "escalation_required")
 
+    def validate(self) -> list[str]:
+        errors = []
+        if self.status not in self.VALID_STATUSES:
+            errors.append(f"Invalid status '{self.status}'. Must be one of: {self.VALID_STATUSES}")
+        return errors
 
-class Artifact(BaseModel):
-    status: ArtifactStatus
-    agent_id: str
-    team_id: str
-    output: dict[str, Any] = Field(default_factory=dict)
-    warnings: list[str] = Field(default_factory=list)
-    token_usage: TokenUsage = Field(default_factory=TokenUsage)
-    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+    def to_json(self) -> str:
+        return json.dumps(self.to_dict(), indent=2, ensure_ascii=False)
+
+    @classmethod
+    def from_dict(cls, d: dict) -> Artifact:
+        known = {f.name for f in cls.__dataclass_fields__.values()}
+        return cls(**{k: v for k, v in d.items() if k in known})
+
+    @classmethod
+    def from_json(cls, text: str) -> Artifact:
+        return cls.from_dict(json.loads(text))

@@ -1,1 +1,1 @@
-"""Process management: tmux sessions, worktrees, process pools."""
+"""Process management via tmux (TUI mode)."""

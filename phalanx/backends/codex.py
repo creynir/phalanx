@@ -1,7 +1,11 @@
-"""Codex CLI adapter (binary: codex)."""
+"""OpenAI Codex CLI backend adapter.
+
+Phase 3: TUI mode only — no --print flag.
+"""
 
 from __future__ import annotations
 
+import re
 import shutil
 from pathlib import Path
 
@@ -9,56 +13,51 @@ from .base import AgentBackend
 
 
 class CodexBackend(AgentBackend):
-    name = "codex"
-
-    def binary_name(self) -> str:
+    def name(self) -> str:
         return "codex"
 
-    def detect(self) -> bool:
-        return shutil.which("codex") is not None
+    def binary_name(self) -> str:
+        return shutil.which("codex") or "codex"
 
-    def supports_worktree(self) -> bool:
-        return False
-
-    def build_interactive_command(
+    def build_start_command(
         self,
         prompt: str,
-        workspace: Path,
+        soul_file: Path | None = None,
         model: str | None = None,
         worktree: str | None = None,
-        soul_file: Path | None = None,
     ) -> list[str]:
-        cmd = ["codex"]
+        cmd = [self.binary_name()]
         if model:
             cmd += ["--model", model]
-        cmd += ["--cd", str(workspace)]
-        if prompt:
-            cmd.append(prompt)
+        if soul_file:
+            cmd += ["--prompt", f"@{soul_file} {prompt}"]
+        else:
+            cmd += ["--prompt", prompt]
         return cmd
 
-    def build_headless_command(
-        self,
-        prompt: str,
-        workspace: Path,
-        model: str | None = None,
-        worktree: str | None = None,
-        soul_file: Path | None = None,
-        json_output: bool = True,
-        auto_approve: bool = True,
-    ) -> list[str]:
-        cmd = ["codex", "exec"]
-        if model:
-            cmd += ["--model", model]
-        cmd += ["--cd", str(workspace)]
-        if auto_approve:
-            cmd += ["--sandbox", "workspace-write", "-a", "never"]
-        cmd.append(prompt)
-        return cmd
+    def build_resume_command(self, chat_id: str) -> list[str]:
+        return [self.binary_name(), "--resume", chat_id]
 
-    def build_resume_command(
-        self,
-        chat_id: str,
-        message: str | None = None,
-    ) -> list[str]:
-        cmd = ["codex", "resume", "--last"]
-        return cmd
+    def parse_chat_id(self, output: str) -> str | None:
+        match = re.search(
+            r"session[_-]?id[\"']?\s*[:=]\s*[\"']([a-zA-Z0-9_-]+)[\"']",
+            output,
+            re.IGNORECASE,
+        )
+        return match.group(1) if match else None
+
+    def parse_token_usage(self, output: str) -> dict | None:
+        match = re.search(r"tokens?\s*[:=]\s*(\d+)", output, re.IGNORECASE)
+        if match:
+            return {"tokens": int(match.group(1))}
+        return None
+
+    def available_models(self) -> list[str]:
+        return [
+            "o3",
+            "o4-mini",
+            "gpt-4.1",
+        ]
+
+    def auto_approve_flags(self) -> list[str]:
+        return ["--full-auto"]

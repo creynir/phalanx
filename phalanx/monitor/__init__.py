@@ -1,1 +1,1 @@
-"""Monitor: heartbeat, stall detection, lifecycle, GC."""
+"""Monitoring: heartbeat, stall detection, TUI screen scraping."""

@@ -1,592 +1,780 @@
-"""Phalanx CLI — Click-based entry point with all subcommands."""
+"""Phalanx CLI — entry point for multi-agent orchestration.
+
+Subcommands:
+  run-agent     Single-agent mode (no team lead needed)
+  create-team   Create a team with a team lead
+  spawn-agent   Spawn a sub-agent (used by team lead)
+  monitor       Blocking DEM-style monitor loop
+  team-status   Show team status
+  agent-status  Show agent status
+  team-result   Read team lead's artifact
+  agent-result  Read agent's artifact
+  message       Send message to team lead
+  message-agent Send message to specific agent
+  send-keys     Send raw keystrokes to an agent
+  stop          Stop a team
+  stop-agent    Stop a specific agent
+  write-artifact Write structured artifact
+  lock          Acquire file lock
+  unlock        Release file lock
+  lock-status   Show file locks
+  list-teams    List all teams
+  status        Show all running agents
+  init          Initialize .phalanx/ in workspace
+  gc            Run garbage collection
+"""
 
 from __future__ import annotations
 
 import json
+import logging
 import os
 from pathlib import Path
 
 import click
-from rich.console import Console
-from rich.table import Table
 
 from phalanx import __version__
-from phalanx.config import load_config, set_config_value, get_config_value, ensure_global_config
-from phalanx.db import Database
-from phalanx.backends import get_backend, detect_default, detect_available
+from phalanx.config import PhalanxConfig, load_config, save_config
+from phalanx.db import StateDB
 
-console = Console()
+logger = logging.getLogger(__name__)
 
-
-def _get_db() -> Database:
-    return Database()
+PHALANX_ROOT_DEFAULT = ".phalanx"
 
 
-def _get_config(workspace: Path | None = None) -> dict:
-    ensure_global_config()
-    return load_config(workspace)
+def _get_root(ctx: click.Context) -> Path:
+    return Path(ctx.obj.get("root", PHALANX_ROOT_DEFAULT)).resolve()
 
 
-def _output(data: dict, as_json: bool = False) -> None:
-    if as_json:
-        click.echo(json.dumps(data, indent=2, default=str))
-    else:
-        for k, v in data.items():
-            click.echo(f"{k}: {v}")
+def _get_db(root: Path) -> StateDB:
+    return StateDB(root / "state.db")
 
 
-# ── Main Group ─────────────────────────────────────────────
+def _get_config(root: Path) -> PhalanxConfig:
+    return load_config(root)
+
+
+def _json_output(data: dict) -> None:
+    click.echo(json.dumps(data, indent=2, ensure_ascii=False, default=str))
+
+
+# ── Main group ───────────────────────────────────────────────────────
+
 
 @click.group(invoke_without_command=True)
-@click.option("--backend", "-b", help="Backend CLI to use (cursor, claude, gemini, codex)")
-@click.option("--model", "-m", help="Model to use")
-@click.option("--auto-approve", is_flag=True, default=False,
-              help="Allow spawning autonomous sub-agents with full permissions")
-@click.option("--json", "as_json", is_flag=True, help="Output JSON")
-@click.option("--version", "-v", is_flag=True, help="Show version")
+@click.version_option(__version__, prog_name="phalanx")
+@click.option(
+    "--root",
+    envvar="PHALANX_ROOT",
+    default=PHALANX_ROOT_DEFAULT,
+    help="Path to .phalanx directory",
+)
+@click.option("--json-output", "json_mode", is_flag=True, help="JSON output mode")
+@click.option("--verbose", "-v", is_flag=True, help="Verbose logging")
 @click.pass_context
-def main(ctx, backend, model, auto_approve, as_json, version):
-    """Phalanx — multi-agent orchestration CLI.
-
-    \b
-    Start an interactive agent session:
-      phalanx                        # uses auto-detected backend
-      phalanx -b gemini              # uses gemini backend
-      phalanx run "do something"     # with an initial prompt
-
-    \b
-    Manage agent teams:
-      phalanx --auto-approve create-team --task "..." --agents coder:2,reviewer
-      phalanx team-status <team-id> --json
-      phalanx stop <team-id>
-    """
+def cli(ctx, root, json_mode, verbose):
+    """Phalanx — Multi-Agent Orchestration System."""
     ctx.ensure_object(dict)
-    ctx.obj["auto_approve"] = auto_approve
+    ctx.obj["root"] = root
+    ctx.obj["json_mode"] = json_mode
 
-    if version:
-        click.echo(f"phalanx {__version__}")
-        return
+    level = logging.DEBUG if verbose else logging.INFO
+    logging.basicConfig(
+        level=level,
+        format="%(asctime)s %(levelname)-8s %(name)s: %(message)s",
+        datefmt="%H:%M:%S",
+    )
 
     if ctx.invoked_subcommand is None:
-        _start_agent(backend=backend, model=model, prompt=None, headless=False)
+        click.echo(ctx.get_help())
 
 
-def _start_agent(backend: str | None, model: str | None, prompt: str | None, headless: bool):
-    """Shared logic for starting a single agent session."""
-    from phalanx.init_cmd import check_and_prompt_skill
-
-    config = _get_config()
-    workspace = Path.cwd()
-
-    if not backend:
-        backend = config.get("defaults", {}).get("backend", "") or detect_default()
-
-    b = get_backend(backend)
-    if not model:
-        model = config.get("defaults", {}).get("model", "") or None
-
-    check_and_prompt_skill(backend, workspace=workspace)
-
-    if headless:
-        if not prompt:
-            click.echo("Error: --print requires a prompt. Use: phalanx run --print \"prompt\"")
-            raise SystemExit(1)
-        cmd = b.build_headless_command(prompt, workspace, model=model, auto_approve=True)
-    else:
-        cmd = b.build_interactive_command(prompt or "", workspace, model=model)
-
-    os.execvp(cmd[0], cmd)
+# ── run-agent: Single-agent mode ─────────────────────────────────────
 
 
-@main.command(name="run")
-@click.argument("prompt", required=False, default=None)
-@click.option("--backend", "-b", help="Backend CLI")
-@click.option("--model", "-m", help="Model to use")
-@click.option("--print", "headless", is_flag=True, help="Headless mode — print and exit")
-def run_cmd(prompt, backend, model, headless):
-    """Start a single agent session, optionally with a prompt."""
-    _start_agent(backend=backend, model=model, prompt=prompt, headless=headless)
-
-
-# ── Init ───────────────────────────────────────────────────
-
-@main.command()
-@click.option("--workspace", "-w", type=click.Path(exists=True), default=".")
-@click.option("--json", "as_json", is_flag=True)
-def init(workspace, as_json):
-    """Detect IDE and create skill files for phalanx integration."""
-    from phalanx.init_cmd import init_workspace
-
-    result = init_workspace(Path(workspace))
-    if as_json:
-        click.echo(json.dumps(result, indent=2))
-    else:
-        if result["ides_detected"]:
-            console.print(f"[green]Detected:[/green] {', '.join(result['ides_detected'])}")
-            for s in result["skills_created"]:
-                console.print(f"  Created: {s}")
-        else:
-            console.print("[yellow]No IDEs detected.[/yellow]")
-
-
-# ── Config ─────────────────────────────────────────────────
-
-@main.group(name="config")
-def config_group():
-    """Show or modify phalanx configuration."""
-
-
-@config_group.command(name="show")
-@click.option("--json", "as_json", is_flag=True)
-def config_show(as_json):
-    """Show current configuration."""
-    cfg = _get_config()
-    if as_json:
-        click.echo(json.dumps(cfg, indent=2))
-    else:
-        _print_config(cfg)
-
-
-@config_group.command(name="set")
-@click.argument("key")
-@click.argument("value")
-def config_set(key, value):
-    """Set a config value (e.g. defaults.backend cursor)."""
-    cfg = set_config_value(key, value)
-    console.print(f"[green]Set[/green] {key} = {get_config_value(cfg, key)}")
-
-
-def _print_config(cfg, prefix=""):
-    for k, v in cfg.items():
-        if isinstance(v, dict):
-            _print_config(v, prefix=f"{prefix}{k}.")
-        else:
-            click.echo(f"  {prefix}{k} = {v}")
-
-
-# ── Models ─────────────────────────────────────────────────
-
-@main.group(name="models")
-def models_group():
-    """Manage model routing configuration."""
-
-
-@models_group.command(name="show")
-@click.option("--json", "as_json", is_flag=True)
-def models_show(as_json):
-    """Show current model routing table."""
-    cfg = _get_config()
-    models = cfg.get("models", {})
-    if as_json:
-        click.echo(json.dumps(models, indent=2))
-        return
-
-    table = Table(title="Model Routing")
-    table.add_column("Backend")
-    roles = ["orchestrator", "coder", "researcher", "reviewer", "architect", "default"]
-    for r in roles:
-        table.add_column(r)
-
-    for backend_name in ["cursor", "claude", "gemini", "codex"]:
-        bm = models.get(backend_name, {})
-        row = [backend_name] + [bm.get(r, "-") for r in roles]
-        table.add_row(*row)
-
-    console.print(table)
-
-
-@models_group.command(name="set")
-@click.argument("key")
-@click.argument("model")
-def models_set(key, model):
-    """Set model for a backend.role (e.g. cursor.coder opus-4.6)."""
-    full_key = f"models.{key}"
-    set_config_value(full_key, model)
-    console.print(f"[green]Set[/green] {full_key} = {model}")
-
-
-@models_group.command(name="reset")
-def models_reset():
-    """Reset model routing to shipped defaults."""
-    from phalanx.config import _load_toml, _SHIPPED_CONFIG, save_global_config
-    shipped = _load_toml(_SHIPPED_CONFIG)
-    cfg = _get_config()
-    cfg["models"] = shipped.get("models", {})
-    save_global_config(cfg)
-    console.print("[green]Model routing reset to defaults.[/green]")
-
-
-@models_group.command(name="update")
-@click.option("--json", "as_json", is_flag=True)
-def models_update(as_json):
-    """Auto-detect available models and validate config."""
-    available = detect_available()
-    report = {"available_backends": available, "validated": {}}
-
-    cfg = _get_config()
-    for backend_name in available:
-        models_cfg = cfg.get("models", {}).get(backend_name, {})
-        report["validated"][backend_name] = {
-            "roles_configured": list(models_cfg.keys()),
-            "status": "ok",
-        }
-
-    if as_json:
-        click.echo(json.dumps(report, indent=2))
-    else:
-        for b in available:
-            console.print(f"  [green]✓[/green] {b}: {report['validated'][b]['roles_configured']}")
-
-
-# ── Status ─────────────────────────────────────────────────
-
-@main.command()
-@click.option("--json", "as_json", is_flag=True)
-def status(as_json):
-    """Show all teams and agents."""
-    db = _get_db()
-    teams = db.list_teams()
-
-    if as_json:
-        click.echo(json.dumps(teams, indent=2, default=str))
-        return
-
-    if not teams:
-        click.echo("No active teams.")
-        return
-
-    table = Table(title="Teams")
-    table.add_column("ID")
-    table.add_column("Task")
-    table.add_column("Status")
-    table.add_column("Backend")
-    table.add_column("Created")
-
-    for t in teams:
-        table.add_row(t["id"], t["task"][:50], t["status"], t["backend"], t["created_at"])
-
-    console.print(table)
-    db.close()
-
-
-# ── Create Team ────────────────────────────────────────────
-
-@main.command(name="create-team")
-@click.option("--task", "-t", required=True, help="Task description for the team")
-@click.option("--agents", "-a", default="coder", help="Agent spec: role[:count],... (e.g. researcher,coder:2)")
-@click.option("--backend", "-b", help="Backend CLI")
-@click.option("--model", "-m", help="Override model for all agents")
-@click.option("--worktree", is_flag=True, help="Use git worktrees for isolation")
-@click.option("--json", "as_json", is_flag=True)
+@cli.command("run-agent")
+@click.argument("task")
+@click.option("--backend", "-b", default=None, help="Backend (cursor, claude, gemini, codex)")
+@click.option("--model", "-m", default=None, help="Model to use")
+@click.option("--auto-approve/--no-auto-approve", default=True, help="Auto-approve tool calls")
 @click.pass_context
-def create_team_cmd(ctx, task, agents, backend, model, worktree, as_json):
-    """Create a team of agents. Requires --auto-approve on phalanx."""
-    if not ctx.obj.get("auto_approve"):
-        console.print(
-            "[red bold]Error:[/red bold] Team creation requires --auto-approve.\n\n"
-            "Sub-agents run autonomously in headless sessions and need full\n"
-            "permissions to execute tools. Without --auto-approve, they would\n"
-            "stall on the first action waiting for human input that cannot\n"
-            "be provided.\n\n"
-            "[yellow]Restart phalanx with:[/yellow]\n"
-            "  phalanx --auto-approve create-team --task \"...\" --agents \"...\"\n\n"
-            "Or when using phalanx as a tool from another agent:\n"
-            "  phalanx --auto-approve create-team -t \"...\" -a \"...\" --json"
-        )
-        raise SystemExit(1)
+def run_agent(ctx, task, backend, model, auto_approve):
+    """Spawn and manage a single agent (no team lead).
 
+    This is the simplest way to run a single sub-agent, identical in
+    capability to a team worker but orchestrated directly by the user
+    or Main Agent.
+    """
+    from phalanx.monitor.heartbeat import HeartbeatMonitor
+    from phalanx.monitor.lifecycle import run_monitor_loop
+    from phalanx.monitor.stall import StallDetector
+    from phalanx.process.manager import ProcessManager
+    from phalanx.team.spawn import spawn_single_agent
+
+    root = _get_root(ctx)
+    config = _get_config(root)
+    db = _get_db(root)
+
+    backend_name = backend or config.default_backend
+    model_name = model or config.default_model
+
+    pm = ProcessManager(root)
+    hb = HeartbeatMonitor(idle_timeout=config.idle_timeout_seconds)
+    sd = StallDetector(pm, hb, idle_timeout=config.idle_timeout_seconds)
+
+    team_id, agent_id, agent_proc = spawn_single_agent(
+        phalanx_root=root,
+        db=db,
+        process_manager=pm,
+        heartbeat_monitor=hb,
+        task=task,
+        backend_name=backend_name,
+        model=model_name,
+        auto_approve=auto_approve,
+        config=config,
+    )
+
+    result_data = {
+        "ok": True,
+        "team_id": team_id,
+        "agent_id": agent_id,
+        "session": agent_proc.session_name,
+        "stream_log": str(agent_proc.stream_log),
+    }
+
+    if ctx.obj.get("json_mode"):
+        _json_output(result_data)
+    else:
+        click.echo(f"Agent spawned: {agent_id}")
+        click.echo(f"  Team:    {team_id}")
+        click.echo(f"  Session: {agent_proc.session_name}")
+        click.echo(f"  Log:     {agent_proc.stream_log}")
+        click.echo(f"  Attach:  tmux attach -t {agent_proc.session_name}")
+
+    # Start monitoring loop
+    click.echo("\nMonitoring agent... (Ctrl+C to detach)")
+    try:
+        mon_result = run_monitor_loop(
+            agent_id=agent_id,
+            process_manager=pm,
+            heartbeat_monitor=hb,
+            stall_detector=sd,
+            max_retries=config.max_retries,
+            max_runtime=config.max_runtime_seconds,
+            poll_interval=config.monitor_poll_interval,
+        )
+
+        if ctx.obj.get("json_mode"):
+            _json_output(mon_result.to_dict())
+        else:
+            click.echo(f"\nAgent {agent_id} finished: {mon_result.final_state}")
+            if mon_result.screen_text:
+                click.echo(f"  Screen: {mon_result.screen_text[:200]}")
+    except KeyboardInterrupt:
+        click.echo(f"\nDetached from agent {agent_id}.")
+        click.echo(f"  Re-attach: tmux attach -t {agent_proc.session_name}")
+        click.echo(f"  Monitor:   phalanx monitor {agent_id}")
+
+
+# ── create-team ──────────────────────────────────────────────────────
+
+
+@cli.command("create-team")
+@click.argument("task")
+@click.option("--backend", "-b", default=None, help="Backend")
+@click.option("--model", "-m", default=None, help="Model")
+@click.option("--auto-approve/--no-auto-approve", default=True)
+@click.pass_context
+def create_team_cmd(ctx, task, backend, model, auto_approve):
+    """Create a team and start its team lead."""
+    from phalanx.monitor.heartbeat import HeartbeatMonitor
+    from phalanx.process.manager import ProcessManager
     from phalanx.team.create import create_team
 
-    db = _get_db()
-    result = create_team(
+    root = _get_root(ctx)
+    config = _get_config(root)
+    db = _get_db(root)
+
+    pm = ProcessManager(root)
+    hb = HeartbeatMonitor(idle_timeout=config.idle_timeout_seconds)
+
+    team_id, lead_id = create_team(
+        phalanx_root=root,
         db=db,
+        process_manager=pm,
+        heartbeat_monitor=hb,
         task=task,
-        agents_spec=agents,
-        backend_name=backend,
-        model=model,
-        workspace=Path.cwd(),
-        use_worktree=worktree,
+        backend_name=backend or config.default_backend,
+        model=model or config.default_model,
+        auto_approve=auto_approve,
+        config=config,
     )
-    db.close()
-    _output(result, as_json)
+
+    result = {"ok": True, "team_id": team_id, "lead_id": lead_id}
+    if ctx.obj.get("json_mode"):
+        _json_output(result)
+    else:
+        click.echo(f"Team created: {team_id}")
+        click.echo(f"  Lead: {lead_id}")
 
 
-# ── Team Status ────────────────────────────────────────────
-
-@main.command(name="team-status")
-@click.argument("team_id")
-@click.option("--json", "as_json", is_flag=True)
-def team_status_cmd(team_id, as_json):
-    """Check status of a team."""
-    from phalanx.team.orchestrator import get_team_status
-
-    db = _get_db()
-    result = get_team_status(db, team_id)
-    db.close()
-    _output(result, as_json)
+# ── spawn-agent (used by team lead) ─────────────────────────────────
 
 
-# ── Team Result ────────────────────────────────────────────
+@cli.command("spawn-agent")
+@click.argument("task")
+@click.option("--team-id", envvar="PHALANX_TEAM_ID", required=True)
+@click.option("--backend", "-b", default=None)
+@click.option("--model", "-m", default=None)
+@click.option("--worktree", default=None)
+@click.option("--auto-approve/--no-auto-approve", default=True)
+@click.pass_context
+def spawn_agent_cmd(ctx, task, team_id, backend, model, worktree, auto_approve):
+    """Spawn a sub-agent in an existing team."""
+    from phalanx.monitor.heartbeat import HeartbeatMonitor
+    from phalanx.process.manager import ProcessManager
+    from phalanx.team.spawn import spawn_agent
 
-@main.command(name="team-result")
-@click.argument("team_id")
-@click.option("--json", "as_json", is_flag=True)
-def team_result_cmd(team_id, as_json):
-    """Read the consolidated team result."""
-    from phalanx.team.orchestrator import get_team_result
+    root = _get_root(ctx)
+    config = _get_config(root)
+    db = _get_db(root)
 
-    db = _get_db()
-    result = get_team_result(db, team_id)
-    db.close()
+    pm = ProcessManager(root)
+    hb = HeartbeatMonitor(idle_timeout=config.idle_timeout_seconds)
 
-    if result is None:
-        click.echo("No result available yet.")
-        return
-    _output(result, as_json)
+    agent_proc = spawn_agent(
+        phalanx_root=root,
+        db=db,
+        process_manager=pm,
+        heartbeat_monitor=hb,
+        team_id=team_id,
+        task=task,
+        backend_name=backend or config.default_backend,
+        model=model or config.default_model,
+        worktree=worktree,
+        auto_approve=auto_approve,
+        config=config,
+    )
 
-
-# ── Message ────────────────────────────────────────────────
-
-@main.command()
-@click.argument("team_id")
-@click.argument("msg")
-@click.option("--json", "as_json", is_flag=True)
-def message(team_id, msg, as_json):
-    """Send a message to the team lead."""
-    from phalanx.comms.messaging import deliver_message
-
-    db = _get_db()
-    agents = db.list_agents(team_id=team_id)
-    lead = next((a for a in agents if a["role"] == "lead"), None)
-
-    if lead is None or not lead.get("tmux_session"):
-        _output({"error": "No active team lead found"}, as_json)
-        db.close()
-        return
-
-    success = deliver_message(lead["tmux_session"], msg)
-    if success:
-        db.insert_message(team_id, "user", msg, agent_id=lead["id"], delivered=True)
-
-    _output({"delivered": success, "team_id": team_id}, as_json)
-    db.close()
-
-
-# ── Stop ───────────────────────────────────────────────────
-
-@main.command()
-@click.argument("team_id")
-@click.option("--json", "as_json", is_flag=True)
-def stop(team_id, as_json):
-    """Stop a team (data preserved for resume)."""
-    from phalanx.team.orchestrator import stop_team
-
-    db = _get_db()
-    result = stop_team(db, team_id)
-    db.close()
-    _output(result, as_json)
+    result = {
+        "ok": True,
+        "agent_id": agent_proc.agent_id,
+        "team_id": team_id,
+        "session": agent_proc.session_name,
+    }
+    if ctx.obj.get("json_mode"):
+        _json_output(result)
+    else:
+        click.echo(f"Agent spawned: {agent_proc.agent_id}")
+        click.echo(f"  Session: {agent_proc.session_name}")
 
 
-# ── Resume ─────────────────────────────────────────────────
-
-@main.command()
-@click.argument("team_id")
-@click.option("--json", "as_json", is_flag=True)
-def resume(team_id, as_json):
-    """Resume a stopped team."""
-    db = _get_db()
-    team = db.get_team(team_id)
-
-    if team is None:
-        _output({"error": f"Team {team_id} not found"}, as_json)
-        db.close()
-        return
-
-    agents = db.list_agents(team_id=team_id)
-    resumed = 0
-
-    for agent in agents:
-        if agent["status"] == "dead" and agent.get("chat_id"):
-            backend = get_backend(agent["backend"])
-            cmd = backend.build_resume_command(agent["chat_id"])
-            from phalanx.process.manager import spawn_in_tmux
-            from phalanx.artifacts.writer import get_stream_log_path
-
-            stream_log = get_stream_log_path(team_id, agent["id"])
-            result = spawn_in_tmux(
-                cmd=cmd, team_id=team_id, agent_id=agent["id"],
-                stream_log=stream_log, working_dir=Path.cwd(),
-            )
-            db.update_agent(agent["id"], status="running",
-                            tmux_session=result["session_name"],
-                            pid=result["pane_pid"])
-            resumed += 1
-
-    if resumed > 0:
-        db.update_team(team_id, status="running")
-
-    _output({"team_id": team_id, "resumed": resumed}, as_json)
-    db.close()
+# ── monitor ──────────────────────────────────────────────────────────
 
 
-# ── Agent Tools (called by agents via shell) ───────────────
+@cli.command("monitor")
+@click.argument("agent_id")
+@click.option("--team-id", envvar="PHALANX_TEAM_ID", default=None)
+@click.pass_context
+def monitor_cmd(ctx, agent_id, team_id):
+    """Blocking DEM-style monitoring loop for an agent."""
+    from phalanx.monitor.heartbeat import HeartbeatMonitor
+    from phalanx.monitor.lifecycle import run_monitor_loop
+    from phalanx.monitor.stall import StallDetector
+    from phalanx.process.manager import ProcessManager
 
-@main.command(name="write-artifact")
-@click.option("--status", "art_status", required=True,
-              type=click.Choice(["success", "failure", "escalation_required"]))
-@click.option("--output", "art_output", required=True, help="JSON output string")
-@click.option("--json", "as_json", is_flag=True)
-def write_artifact_cmd(art_status, art_output, as_json):
-    """Write an artifact (used by agents)."""
-    from phalanx.artifacts.writer import write_artifact
+    root = _get_root(ctx)
+    config = _get_config(root)
+    db = _get_db(root)
 
-    try:
-        output_data = json.loads(art_output)
-    except json.JSONDecodeError:
-        output_data = {"raw": art_output}
+    agent = db.get_agent(agent_id)
+    if agent is None:
+        click.echo(f"Error: Agent '{agent_id}' not found", err=True)
+        raise SystemExit(1)
 
-    artifact = write_artifact(art_status, output_data)
+    resolved_team_id = team_id or agent["team_id"]
+    stream_log = root / "teams" / resolved_team_id / "agents" / agent_id / "stream.log"
 
-    # Update DB
-    db = _get_db()
-    db.update_agent(artifact.agent_id, artifact_status=art_status)
-    db.close()
+    pm = ProcessManager(root)
+    hb = HeartbeatMonitor(idle_timeout=config.idle_timeout_seconds)
+    hb.register(agent_id, stream_log)
+    sd = StallDetector(pm, hb, idle_timeout=config.idle_timeout_seconds)
 
-    result = artifact.model_dump()
-    result["warning"] = "Artifacts are ephemeral — deleted after 24h of team inactivity."
-    _output(result, as_json)
+    click.echo(f"Monitoring agent {agent_id}...")
+    result = run_monitor_loop(
+        agent_id=agent_id,
+        process_manager=pm,
+        heartbeat_monitor=hb,
+        stall_detector=sd,
+        max_retries=config.max_retries,
+        max_runtime=config.max_runtime_seconds,
+        poll_interval=config.monitor_poll_interval,
+    )
+
+    if ctx.obj.get("json_mode"):
+        _json_output(result.to_dict())
+    else:
+        click.echo(json.dumps(result.to_dict(), indent=2))
 
 
-@main.command(name="agent-status")
-@click.argument("agent_id", required=False)
-@click.option("--json", "as_json", is_flag=True)
-def agent_status_cmd(agent_id, as_json):
-    """Check agent status."""
-    db = _get_db()
+# ── team-status / agent-status ──────────────────────────────────────
+
+
+@cli.command("team-status")
+@click.argument("team_id", required=False, default=None)
+@click.pass_context
+def team_status_cmd(ctx, team_id):
+    """Show team status."""
+    root = _get_root(ctx)
+    db = _get_db(root)
+
+    if team_id:
+        from phalanx.team.orchestrator import get_team_status
+
+        result = get_team_status(db, team_id)
+        if result is None:
+            click.echo(f"Team '{team_id}' not found", err=True)
+            raise SystemExit(1)
+    else:
+        teams = db.list_teams()
+        result = {"teams": teams, "count": len(teams)}
+
+    if ctx.obj.get("json_mode"):
+        _json_output(result)
+    else:
+        click.echo(json.dumps(result, indent=2, default=str))
+
+
+@cli.command("agent-status")
+@click.argument("agent_id", required=False, default=None)
+@click.pass_context
+def agent_status_cmd(ctx, agent_id):
+    """Show agent status."""
+    root = _get_root(ctx)
+    db = _get_db(root)
 
     if agent_id:
         agent = db.get_agent(agent_id)
         if agent is None:
-            _output({"error": "Agent not found"}, as_json)
-        else:
-            from phalanx.monitor.lifecycle import check_agent_health
-            check_agent_health(db, agent_id)
-            _output(db.get_agent(agent_id), as_json)
+            click.echo(f"Agent '{agent_id}' not found", err=True)
+            raise SystemExit(1)
+        result = agent
     else:
-        team_id = os.environ.get("PHALANX_TEAM_ID", "")
-        if team_id:
-            agents = db.list_agents(team_id=team_id)
-            if as_json:
-                click.echo(json.dumps(agents, indent=2, default=str))
-            else:
-                for a in agents:
-                    click.echo(f"  {a['id']}: {a['status']} ({a['role']})")
-        else:
-            _output({"error": "Provide agent_id or set PHALANX_TEAM_ID"}, as_json)
+        result = {"agents": db.list_agents()}
 
-    db.close()
+    if ctx.obj.get("json_mode"):
+        _json_output(result)
+    else:
+        click.echo(json.dumps(result, indent=2, default=str))
 
 
-@main.command(name="agent-result")
+# ── team-result / agent-result ──────────────────────────────────────
+
+
+@cli.command("team-result")
+@click.argument("team_id")
+@click.pass_context
+def team_result_cmd(ctx, team_id):
+    """Read team lead's artifact."""
+    from phalanx.team.orchestrator import get_team_result
+
+    root = _get_root(ctx)
+    result = get_team_result(root, team_id)
+    if result is None:
+        click.echo(f"No artifact found for team '{team_id}'", err=True)
+        raise SystemExit(1)
+    _json_output(result)
+
+
+@cli.command("agent-result")
 @click.argument("agent_id")
-@click.option("--json", "as_json", is_flag=True)
-def agent_result_cmd(agent_id, as_json):
-    """Read an agent's artifact."""
-    db = _get_db()
-    agent = db.get_agent(agent_id)
-    db.close()
+@click.option("--team-id", envvar="PHALANX_TEAM_ID", required=True)
+@click.pass_context
+def agent_result_cmd(ctx, agent_id, team_id):
+    """Read agent's artifact."""
+    from phalanx.team.orchestrator import get_agent_result
 
+    root = _get_root(ctx)
+    result = get_agent_result(root, team_id, agent_id)
+    if result is None:
+        click.echo(f"No artifact found for agent '{agent_id}'", err=True)
+        raise SystemExit(1)
+    _json_output(result)
+
+
+# ── message / message-agent ─────────────────────────────────────────
+
+
+@cli.command("message")
+@click.argument("team_id")
+@click.argument("text")
+@click.pass_context
+def message_cmd(ctx, team_id, text):
+    """Send message to team lead (resumes if dead)."""
+    root = _get_root(ctx)
+    db = _get_db(root)
+
+    db.send_message(team_id, sender="main", content=text)
+
+    # Find the team lead
+    agents = db.list_agents(team_id)
+    lead = next((a for a in agents if a["role"] == "lead"), None)
+    if lead and lead["status"] == "running":
+        from phalanx.comms.messaging import deliver_message
+        from phalanx.process.manager import ProcessManager
+
+        pm = ProcessManager(root)
+        deliver_message(pm, lead["id"], text)
+
+    if ctx.obj.get("json_mode"):
+        _json_output({"ok": True, "team_id": team_id, "delivered": True})
+    else:
+        click.echo(f"Message sent to team {team_id}")
+
+
+@cli.command("message-agent")
+@click.argument("agent_id")
+@click.argument("text")
+@click.option("--team-id", envvar="PHALANX_TEAM_ID", default=None)
+@click.pass_context
+def message_agent_cmd(ctx, agent_id, text, team_id):
+    """Send message to a specific agent."""
+    root = _get_root(ctx)
+    db = _get_db(root)
+
+    agent = db.get_agent(agent_id)
     if agent is None:
-        _output({"error": "Agent not found"}, as_json)
-        return
+        click.echo(f"Agent '{agent_id}' not found", err=True)
+        raise SystemExit(1)
 
-    from phalanx.artifacts.reader import read_artifact
-    artifact = read_artifact(agent["team_id"], agent_id)
+    resolved_team = team_id or agent["team_id"]
+    db.send_message(resolved_team, sender="lead", content=text, agent_id=agent_id)
 
-    if artifact is None:
-        _output({"error": "No artifact yet"}, as_json)
+    if agent["status"] == "running":
+        from phalanx.comms.messaging import deliver_message
+        from phalanx.process.manager import ProcessManager
+
+        pm = ProcessManager(root)
+        deliver_message(pm, agent_id, text)
+
+    if ctx.obj.get("json_mode"):
+        _json_output({"ok": True, "agent_id": agent_id, "delivered": True})
     else:
-        _output(artifact.model_dump(), as_json)
+        click.echo(f"Message sent to agent {agent_id}")
 
 
-@main.command(name="message-agent")
+# ── send-keys ────────────────────────────────────────────────────────
+
+
+@cli.command("send-keys")
 @click.argument("agent_id")
-@click.argument("msg")
-@click.option("--json", "as_json", is_flag=True)
-def message_agent_cmd(agent_id, msg, as_json):
-    """Send a message to a specific agent."""
-    from phalanx.comms.messaging import deliver_message
+@click.argument("keys")
+@click.option("--no-enter", is_flag=True, help="Don't press Enter after keys")
+@click.pass_context
+def send_keys_cmd(ctx, agent_id, keys, no_enter):
+    """Send raw keystrokes to an agent's tmux pane.
 
-    db = _get_db()
-    agent = db.get_agent(agent_id)
+    Used to resolve prompts (e.g., 'a' for workspace trust, 'y' for approval).
+    Special keys: C-c (Ctrl+C), Enter, Tab, etc.
+    """
+    from phalanx.process.manager import ProcessManager
 
-    if agent is None or not agent.get("tmux_session"):
-        _output({"error": "Agent not found or not running"}, as_json)
-        db.close()
-        return
+    root = _get_root(ctx)
+    pm = ProcessManager(root)
 
-    success = deliver_message(agent["tmux_session"], msg)
-    if success:
-        db.insert_message(agent["team_id"], "lead", msg,
-                          agent_id=agent_id, delivered=True)
+    success = pm.send_keys(agent_id, keys, enter=not no_enter)
+    if ctx.obj.get("json_mode"):
+        _json_output({"ok": success, "agent_id": agent_id, "keys": keys})
+    else:
+        if success:
+            click.echo(f"Keys sent to {agent_id}: {keys!r}")
+        else:
+            click.echo(f"Failed to send keys to {agent_id}", err=True)
+            raise SystemExit(1)
 
-    _output({"delivered": success, "agent_id": agent_id}, as_json)
-    db.close()
+
+# ── stop / stop-agent ───────────────────────────────────────────────
 
 
-@main.command(name="lock")
+@cli.command("stop")
+@click.argument("team_id")
+@click.pass_context
+def stop_cmd(ctx, team_id):
+    """Stop a team (kill processes, keep data, resumable)."""
+    from phalanx.process.manager import ProcessManager
+    from phalanx.team.orchestrator import stop_team
+
+    root = _get_root(ctx)
+    db = _get_db(root)
+    pm = ProcessManager(root)
+
+    result = stop_team(db, pm, team_id)
+    if ctx.obj.get("json_mode"):
+        _json_output({"ok": True, **result})
+    else:
+        click.echo(f"Team {team_id} stopped ({len(result['stopped_agents'])} agents killed)")
+
+
+@cli.command("stop-agent")
+@click.argument("agent_id")
+@click.pass_context
+def stop_agent_cmd(ctx, agent_id):
+    """Stop a specific agent."""
+    from phalanx.process.manager import ProcessManager
+
+    root = _get_root(ctx)
+    db = _get_db(root)
+    pm = ProcessManager(root)
+
+    pm.kill_agent(agent_id)
+    db.update_agent(agent_id, status="dead")
+
+    if ctx.obj.get("json_mode"):
+        _json_output({"ok": True, "agent_id": agent_id, "status": "dead"})
+    else:
+        click.echo(f"Agent {agent_id} stopped")
+
+
+# ── write-artifact ──────────────────────────────────────────────────
+
+
+@cli.command("write-artifact")
+@click.option(
+    "--status", required=True, type=click.Choice(["success", "failure", "escalation_required"])
+)
+@click.option("--output", required=True, help="JSON output data")
+@click.option("--warnings", default="[]", help="JSON array of warning strings")
+@click.option("--json", "json_flag", is_flag=True, help="Output is JSON format")
+@click.pass_context
+def write_artifact_cmd(ctx, status, output, warnings, json_flag):
+    """Write a structured artifact (used by worker agents)."""
+    from phalanx.artifacts.schema import Artifact
+    from phalanx.artifacts.writer import write_artifact
+
+    root = _get_root(ctx)
+    db = _get_db(root)
+
+    agent_id = os.environ.get("PHALANX_AGENT_ID", "")
+    team_id = os.environ.get("PHALANX_TEAM_ID", "")
+
+    try:
+        output_data = json.loads(output) if json_flag else output
+    except json.JSONDecodeError:
+        output_data = output
+
+    try:
+        warnings_list = json.loads(warnings)
+    except json.JSONDecodeError:
+        warnings_list = []
+
+    artifact = Artifact(
+        status=status,
+        output=output_data,
+        warnings=warnings_list,
+        agent_id=agent_id,
+        team_id=team_id,
+    )
+
+    artifact_dir = root / "teams" / team_id / "agents" / agent_id
+    path = write_artifact(artifact_dir, artifact, db=db)
+
+    click.echo(f"Artifact written: {path}")
+
+
+# ── lock / unlock / lock-status ─────────────────────────────────────
+
+
+@cli.command("lock")
 @click.argument("file_path")
-@click.option("--json", "as_json", is_flag=True)
-def lock_cmd(file_path, as_json):
-    """Acquire a file lock."""
+@click.pass_context
+def lock_cmd(ctx, file_path):
+    """Acquire advisory file lock."""
     from phalanx.comms.file_lock import acquire_lock
 
-    team_id = os.environ.get("PHALANX_TEAM_ID", "")
-    agent_id = os.environ.get("PHALANX_AGENT_ID", "")
+    root = _get_root(ctx)
+    db = _get_db(root)
+    team_id = os.environ.get("PHALANX_TEAM_ID", "unknown")
+    agent_id = os.environ.get("PHALANX_AGENT_ID", "unknown")
 
-    if not team_id or not agent_id:
-        _output({"error": "PHALANX_TEAM_ID and PHALANX_AGENT_ID must be set"}, as_json)
-        return
+    success = acquire_lock(db, file_path, team_id, agent_id)
+    if ctx.obj.get("json_mode"):
+        _json_output({"ok": success, "file": file_path})
+    else:
+        if success:
+            click.echo(f"Lock acquired: {file_path}")
+        else:
+            click.echo(f"Lock denied: {file_path}", err=True)
+            raise SystemExit(1)
 
-    db = _get_db()
-    acquired = acquire_lock(db, file_path, team_id, agent_id)
-    _output({"file": file_path, "acquired": acquired}, as_json)
-    db.close()
 
-
-@main.command(name="unlock")
+@cli.command("unlock")
 @click.argument("file_path")
-@click.option("--json", "as_json", is_flag=True)
-def unlock_cmd(file_path, as_json):
-    """Release a file lock."""
+@click.pass_context
+def unlock_cmd(ctx, file_path):
+    """Release advisory file lock."""
     from phalanx.comms.file_lock import release_lock
 
-    db = _get_db()
+    root = _get_root(ctx)
+    db = _get_db(root)
     release_lock(db, file_path)
-    _output({"file": file_path, "released": True}, as_json)
-    db.close()
+    if ctx.obj.get("json_mode"):
+        _json_output({"ok": True, "file": file_path})
+    else:
+        click.echo(f"Lock released: {file_path}")
 
 
-@main.command(name="lock-status")
-@click.option("--json", "as_json", is_flag=True)
-def lock_status_cmd(as_json):
-    """Show active file locks."""
-    team_id = os.environ.get("PHALANX_TEAM_ID", "")
-    if not team_id:
-        _output({"error": "PHALANX_TEAM_ID must be set"}, as_json)
-        return
-
-    db = _get_db()
+@cli.command("lock-status")
+@click.pass_context
+def lock_status_cmd(ctx):
+    """Show file locks."""
+    root = _get_root(ctx)
+    db = _get_db(root)
+    team_id = os.environ.get("PHALANX_TEAM_ID")
     locks = db.list_locks(team_id)
-    db.close()
 
-    if as_json:
-        click.echo(json.dumps(locks, indent=2, default=str))
+    if ctx.obj.get("json_mode"):
+        _json_output({"locks": locks})
     else:
         if not locks:
-            click.echo("No active locks.")
-        for lock in locks:
-            click.echo(f"  {lock['file_path']} locked by {lock['agent_id']}")
+            click.echo("No active locks")
+        else:
+            for lock in locks:
+                click.echo(f"  {lock['file_path']}  (agent={lock['agent_id']}, pid={lock['pid']})")
+
+
+# ── list-teams / status ─────────────────────────────────────────────
+
+
+@cli.command("list-teams")
+@click.pass_context
+def list_teams_cmd(ctx):
+    """List all teams with status summary."""
+    root = _get_root(ctx)
+    db = _get_db(root)
+    teams = db.list_teams()
+
+    if ctx.obj.get("json_mode"):
+        _json_output({"teams": teams})
+    else:
+        if not teams:
+            click.echo("No teams found")
+        else:
+            for t in teams:
+                agents = db.list_agents(t["id"])
+                running = sum(1 for a in agents if a["status"] == "running")
+                click.echo(
+                    f"  {t['id']}  {t['status']:<10} "
+                    f"agents={len(agents)} running={running}  "
+                    f"task={t['task'][:60]}"
+                )
+
+
+@cli.command("status")
+@click.pass_context
+def status_cmd(ctx):
+    """Show all running agents and teams."""
+    root = _get_root(ctx)
+    db = _get_db(root)
+
+    teams = db.list_teams()
+    all_agents = db.list_agents()
+
+    result = {
+        "teams": len(teams),
+        "agents": len(all_agents),
+        "running": sum(1 for a in all_agents if a["status"] == "running"),
+    }
+
+    if ctx.obj.get("json_mode"):
+        _json_output(result)
+    else:
+        click.echo(f"Teams: {result['teams']}")
+        click.echo(f"Agents: {result['agents']} ({result['running']} running)")
+        for a in all_agents:
+            status_icon = {
+                "running": "●",
+                "pending": "○",
+                "dead": "⊘",
+                "failed": "✗",
+                "blocked_on_prompt": "⏸",
+                "suspended": "◑",
+            }.get(a["status"], "?")
+            click.echo(f"  {status_icon} {a['id']:<30} {a['status']:<20} team={a['team_id']}")
+
+
+# ── init ─────────────────────────────────────────────────────────────
+
+
+@cli.command("init")
+@click.pass_context
+def init_cmd(ctx):
+    """Initialize .phalanx/ in the current workspace."""
+    root = _get_root(ctx)
+    root.mkdir(parents=True, exist_ok=True)
+
+    # Create soul directory
+    soul_dir = root / "soul"
+    soul_dir.mkdir(exist_ok=True)
+
+    # Create default config
+    config = PhalanxConfig()
+    save_config(root, config)
+
+    # Initialize DB
+    _get_db(root)
+
+    click.echo(f"Initialized phalanx at {root}")
+    click.echo("  Created: config.json, state.db, soul/")
+
+
+# ── gc ───────────────────────────────────────────────────────────────
+
+
+@cli.command("gc")
+@click.option("--older-than", default="24h", help="Age threshold (e.g., 24h, 7d)")
+@click.option("--all", "gc_all", is_flag=True, help="Delete everything")
+@click.pass_context
+def gc_cmd(ctx, older_than, gc_all):
+    """Run garbage collection on dead teams."""
+    from phalanx.monitor.gc import run_gc
+
+    root = _get_root(ctx)
+    db = _get_db(root)
+
+    if gc_all:
+        hours = 0
+    else:
+        hours = _parse_duration(older_than)
+
+    deleted = run_gc(root, db=db, max_age_hours=hours)
+
+    if ctx.obj.get("json_mode"):
+        _json_output({"ok": True, "deleted": deleted, "count": len(deleted)})
+    else:
+        if deleted:
+            click.echo(f"Deleted {len(deleted)} teams: {', '.join(deleted)}")
+        else:
+            click.echo("No teams to clean up")
+
+
+def _parse_duration(s: str) -> int:
+    """Parse duration string like '24h', '7d', '30m' into hours."""
+    s = s.strip().lower()
+    if s.endswith("d"):
+        return int(s[:-1]) * 24
+    elif s.endswith("h"):
+        return int(s[:-1])
+    elif s.endswith("m"):
+        return max(1, int(s[:-1]) // 60)
+    else:
+        return int(s)
+
+
+# ── Entry point ──────────────────────────────────────────────────────
+
+
+def main():
+    cli(obj={})
 
 
 if __name__ == "__main__":

@@ -1,105 +1,63 @@
-"""Team creation: parse agent spec, spawn workers + lead."""
+"""Team creation and management."""
 
 from __future__ import annotations
 
+import logging
 import uuid
 from pathlib import Path
-from typing import Any
 
-from phalanx.backends import get_backend
-from phalanx.config import load_config
-from phalanx.db import Database
-from phalanx.monitor.gc import gc_check
-from .spawn import spawn_worker, spawn_team_lead
+from phalanx.config import PhalanxConfig
+from phalanx.db import StateDB
+from phalanx.monitor.heartbeat import HeartbeatMonitor
+from phalanx.process.manager import ProcessManager
+from phalanx.team.spawn import spawn_agent
 
-
-def parse_agents_spec(spec: str) -> list[tuple[str, int]]:
-    """Parse agent spec like 'researcher,coder:2,reviewer' into [(role, count)]."""
-    agents = []
-    for part in spec.split(","):
-        part = part.strip()
-        if ":" in part:
-            role, count_str = part.split(":", 1)
-            agents.append((role.strip(), int(count_str)))
-        else:
-            agents.append((part, 1))
-    return agents
+logger = logging.getLogger(__name__)
 
 
 def create_team(
-    db: Database,
+    phalanx_root: Path,
+    db: StateDB,
+    process_manager: ProcessManager,
+    heartbeat_monitor: HeartbeatMonitor,
     task: str,
-    agents_spec: str = "coder",
-    backend_name: str | None = None,
+    backend_name: str = "cursor",
     model: str | None = None,
-    workspace: Path | None = None,
-    use_worktree: bool = False,
-    config: dict[str, Any] | None = None,
-) -> dict:
-    """Create a team: spawn all workers, then spawn team lead.
+    auto_approve: bool = True,
+    config: PhalanxConfig | None = None,
+) -> tuple[str, str]:
+    """Create a new team and spawn its team lead.
 
-    Returns dict with team info and agent IDs.
+    Returns (team_id, lead_agent_id).
     """
-    config = config or load_config(workspace)
-
-    if backend_name is None:
-        backend_name = config.get("defaults", {}).get("backend", "")
-        if not backend_name:
-            from phalanx.backends.registry import detect_default
-            backend_name = detect_default()
-
-    backend = get_backend(backend_name)
-    workspace = workspace or Path.cwd()
-    team_id = uuid.uuid4().hex[:12]
-
-    # Opportunistic GC
-    gc_hours = config.get("timeouts", {}).get("team_gc_hours", 24)
-    gc_check(db, gc_hours=gc_hours)
+    team_id = f"team-{uuid.uuid4().hex[:8]}"
+    lead_id = f"lead-{uuid.uuid4().hex[:8]}"
 
     # Create team in DB
-    db.create_team(team_id, task, backend_name, model=model)
+    team_config = {}
+    if config:
+        team_config = config.to_dict()
+    db.create_team(team_id, task, config=team_config)
 
-    # Parse and spawn workers
-    agent_specs = parse_agents_spec(agents_spec)
-    worker_ids = []
-    worker_index = 0
-
-    for role, count in agent_specs:
-        for i in range(count):
-            worktree_name = f"{team_id}-worker-{worker_index}" if use_worktree else None
-            agent = spawn_worker(
-                db=db,
-                backend=backend,
-                team_id=team_id,
-                task=task,
-                role=role,
-                config=config,
-                workspace=workspace,
-                index=worker_index,
-                worktree=worktree_name,
-            )
-            worker_ids.append(agent["id"])
-            worker_index += 1
+    # Create team directory
+    team_dir = phalanx_root / "teams" / team_id
+    team_dir.mkdir(parents=True, exist_ok=True)
 
     # Spawn team lead
-    lead = spawn_team_lead(
+    spawn_agent(
+        phalanx_root=phalanx_root,
         db=db,
-        backend=backend,
+        process_manager=process_manager,
+        heartbeat_monitor=heartbeat_monitor,
         team_id=team_id,
-        team_task=task,
-        worker_ids=worker_ids,
+        task=task,
+        role="lead",
+        agent_id=lead_id,
+        backend_name=backend_name,
+        model=model,
+        auto_approve=auto_approve,
         config=config,
-        workspace=workspace,
     )
 
-    db.insert_event("team_created", team_id=team_id,
-                    payload={"workers": worker_ids, "lead": lead["id"]})
-
-    return {
-        "team_id": team_id,
-        "task": task,
-        "backend": backend_name,
-        "workers": worker_ids,
-        "lead": lead["id"],
-        "status": "running",
-    }
+    logger.info("Created team %s with lead %s", team_id, lead_id)
+    return team_id, lead_id

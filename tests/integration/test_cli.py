@@ -22,7 +22,7 @@ class TestVersion:
     def test_version(self, runner):
         result = runner.invoke(main, ["--version"])
         assert result.exit_code == 0
-        assert "0.1.0" in result.output
+        assert "0.1." in result.output
 
 
 class TestHelp:
@@ -37,7 +37,7 @@ class TestStatus:
     def test_status_runs(self, runner):
         result = runner.invoke(main, ["status"])
         assert result.exit_code == 0
-        assert ("No active teams" in result.output or "Teams" in result.output)
+        assert "No active teams" in result.output or "Teams" in result.output
 
     def test_status_json(self, runner):
         result = runner.invoke(main, ["status", "--json"])

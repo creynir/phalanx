@@ -1,146 +1,169 @@
-"""Agent spawning with soul file injection and env setup."""
+"""Agent spawning with soul file injection and environment setup.
+
+Handles both team-based spawning (from team lead) and single-agent mode
+(from `phalanx run-agent`). In both cases, agents run in TUI mode
+inside tmux with pipe-pane log streaming.
+"""
 
 from __future__ import annotations
 
+import logging
+import os
 import uuid
 from pathlib import Path
-from typing import Any
 
-from phalanx.backends.base import AgentBackend
-from phalanx.backends.model_router import resolve_model
-from phalanx.db import Database
-from phalanx.process.manager import spawn_in_tmux
-from phalanx.artifacts.writer import get_stream_log_path, TEAMS_DIR
-from phalanx.soul.loader import (
-    load_team_lead_soul,
-    load_worker_soul,
-    write_soul_to_temp,
-)
+from phalanx.backends import get_backend
+from phalanx.config import PhalanxConfig
+from phalanx.db import StateDB
+from phalanx.monitor.heartbeat import HeartbeatMonitor
+from phalanx.process.manager import AgentProcess, ProcessManager
+
+logger = logging.getLogger(__name__)
 
 
-def _make_agent_id(role: str, index: int | None = None) -> str:
-    short = uuid.uuid4().hex[:6]
-    if index is not None:
-        return f"{role}-{index}-{short}"
-    return f"{role}-{short}"
-
-
-def spawn_worker(
-    db: Database,
-    backend: AgentBackend,
+def spawn_agent(
+    phalanx_root: Path,
+    db: StateDB,
+    process_manager: ProcessManager,
+    heartbeat_monitor: HeartbeatMonitor,
     team_id: str,
     task: str,
-    role: str,
-    config: dict[str, Any],
-    workspace: Path,
-    index: int | None = None,
+    role: str = "worker",
+    agent_id: str | None = None,
+    backend_name: str = "cursor",
+    model: str | None = None,
     worktree: str | None = None,
-) -> dict:
-    """Spawn a single worker agent in tmux."""
-    agent_id = _make_agent_id(role, index)
-    model = resolve_model(backend.name, role, config)
+    working_dir: str | None = None,
+    auto_approve: bool = True,
+    config: PhalanxConfig | None = None,
+) -> AgentProcess:
+    """Spawn an agent in TUI mode with full setup.
 
-    team_dir = TEAMS_DIR / team_id
-    soul_content = load_worker_soul(task=task)
-    soul_path = write_soul_to_temp(soul_content, team_dir, agent_id)
+    1. Generate agent ID
+    2. Load and inject soul file
+    3. Create DB record
+    4. Spawn tmux session with pipe-pane
+    5. Register heartbeat monitor
+    """
+    if agent_id is None:
+        agent_id = f"{role}-{uuid.uuid4().hex[:8]}"
 
-    cmd = backend.build_headless_command(
-        prompt=soul_content + "\n\n" + task,
-        workspace=workspace,
+    backend = get_backend(backend_name)
+
+    # Load appropriate soul file
+    soul_file = _resolve_soul_file(phalanx_root, role)
+
+    # Create DB record
+    db.create_agent(
+        agent_id=agent_id,
+        team_id=team_id,
+        task=task,
+        role=role,
+        model=model,
+        backend=backend_name,
+        worktree=worktree,
+    )
+
+    # Set environment variables for the agent
+    env_vars = {
+        "PHALANX_AGENT_ID": agent_id,
+        "PHALANX_TEAM_ID": team_id,
+        "PHALANX_ROOT": str(phalanx_root),
+    }
+    for k, v in env_vars.items():
+        os.environ[k] = v
+
+    # Spawn in tmux
+    agent_proc = process_manager.spawn(
+        team_id=team_id,
+        agent_id=agent_id,
+        backend=backend,
+        prompt=task,
+        soul_file=soul_file,
         model=model,
         worktree=worktree,
-        soul_file=soul_path,
-        auto_approve=True,
+        working_dir=working_dir,
+        auto_approve=auto_approve,
     )
 
-    stream_log = get_stream_log_path(team_id, agent_id)
-    env = {
-        "PHALANX_TEAM_ID": team_id,
-        "PHALANX_AGENT_ID": agent_id,
-    }
+    # Update DB with running state
+    db.update_agent(agent_id, status="running", pid=os.getpid())
+    db.log_event(team_id, "spawn", agent_id=agent_id, payload={"task": task, "model": model})
 
-    result = spawn_in_tmux(
-        cmd=cmd,
-        team_id=team_id,
-        agent_id=agent_id,
-        stream_log=stream_log,
-        working_dir=workspace,
-        env=env,
+    # Register heartbeat
+    heartbeat_monitor.register(agent_id, agent_proc.stream_log)
+
+    logger.info(
+        "Spawned agent %s (role=%s, backend=%s, model=%s) in team %s",
+        agent_id,
+        role,
+        backend_name,
+        model or "default",
+        team_id,
     )
+    return agent_proc
 
-    db.create_agent(
-        agent_id=agent_id,
+
+def spawn_single_agent(
+    phalanx_root: Path,
+    db: StateDB,
+    process_manager: ProcessManager,
+    heartbeat_monitor: HeartbeatMonitor,
+    task: str,
+    backend_name: str = "cursor",
+    model: str | None = None,
+    auto_approve: bool = True,
+    config: PhalanxConfig | None = None,
+) -> tuple[str, str, AgentProcess]:
+    """Spawn a single agent without a team lead (run-agent mode).
+
+    Creates a synthetic team with a single worker. Returns
+    (team_id, agent_id, AgentProcess).
+    """
+    team_id = f"solo-{uuid.uuid4().hex[:8]}"
+    agent_id = f"agent-{uuid.uuid4().hex[:8]}"
+
+    # Create a synthetic team
+    db.create_team(team_id, task, config={"mode": "single-agent"})
+
+    agent_proc = spawn_agent(
+        phalanx_root=phalanx_root,
+        db=db,
+        process_manager=process_manager,
+        heartbeat_monitor=heartbeat_monitor,
         team_id=team_id,
-        role=role,
         task=task,
-        backend=backend.name,
-        model=model,
-        tmux_session=result["session_name"],
-        pid=result["pane_pid"],
-        status="running",
-    )
-
-    db.insert_event("agent_spawned", team_id=team_id, agent_id=agent_id,
-                    payload={"role": role, "model": model})
-
-    return db.get_agent(agent_id)
-
-
-def spawn_team_lead(
-    db: Database,
-    backend: AgentBackend,
-    team_id: str,
-    team_task: str,
-    worker_ids: list[str],
-    config: dict[str, Any],
-    workspace: Path,
-) -> dict:
-    """Spawn the team lead agent."""
-    agent_id = _make_agent_id("lead")
-    model = resolve_model(backend.name, "orchestrator", config)
-
-    worker_list = "\n".join(f"- {wid}" for wid in worker_ids)
-    soul_content = load_team_lead_soul(worker_list=worker_list, team_task=team_task)
-
-    team_dir = TEAMS_DIR / team_id
-    soul_path = write_soul_to_temp(soul_content, team_dir, agent_id)
-
-    cmd = backend.build_headless_command(
-        prompt=soul_content,
-        workspace=workspace,
-        model=model,
-        soul_file=soul_path,
-        auto_approve=True,
-    )
-
-    stream_log = get_stream_log_path(team_id, agent_id)
-    env = {
-        "PHALANX_TEAM_ID": team_id,
-        "PHALANX_AGENT_ID": agent_id,
-    }
-
-    result = spawn_in_tmux(
-        cmd=cmd,
-        team_id=team_id,
+        role="worker",
         agent_id=agent_id,
-        stream_log=stream_log,
-        working_dir=workspace,
-        env=env,
-    )
-
-    db.create_agent(
-        agent_id=agent_id,
-        team_id=team_id,
-        role="lead",
-        task=team_task,
-        backend=backend.name,
+        backend_name=backend_name,
         model=model,
-        tmux_session=result["session_name"],
-        pid=result["pane_pid"],
-        status="running",
+        auto_approve=auto_approve,
+        config=config,
     )
 
-    db.insert_event("lead_spawned", team_id=team_id, agent_id=agent_id,
-                    payload={"model": model, "worker_count": len(worker_ids)})
+    logger.info("Single-agent mode: team=%s, agent=%s", team_id, agent_id)
+    return team_id, agent_id, agent_proc
 
-    return db.get_agent(agent_id)
+
+def _resolve_soul_file(phalanx_root: Path, role: str) -> Path | None:
+    """Find the appropriate soul file for the role."""
+    soul_dir = phalanx_root / "soul"
+    if role == "lead":
+        path = soul_dir / "team_lead.md"
+    else:
+        path = soul_dir / "worker.md"
+
+    if path.exists():
+        return path
+
+    # Try bundled soul files
+    bundled = Path(__file__).parent.parent / "soul"
+    if role == "lead":
+        bundled_path = bundled / "team_lead.md"
+    else:
+        bundled_path = bundled / "worker.md"
+
+    if bundled_path.exists():
+        return bundled_path
+
+    return None

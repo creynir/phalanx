@@ -1,14 +1,6 @@
-"""Backend adapters for agent CLIs."""
+"""Agent backend adapters (Cursor, Claude, Gemini, Codex)."""
 
 from .base import AgentBackend
-from .registry import detect_available, detect_default, get_backend, list_backends
-from .model_router import resolve_model
+from .registry import get_backend, list_backends
 
-__all__ = [
-    "AgentBackend",
-    "detect_available",
-    "detect_default",
-    "get_backend",
-    "list_backends",
-    "resolve_model",
-]
+__all__ = ["AgentBackend", "get_backend", "list_backends"]
