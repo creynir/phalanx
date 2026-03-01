@@ -15,12 +15,28 @@ from phalanx.team.spawn import spawn_agent
 logger = logging.getLogger(__name__)
 
 
+def parse_agents_spec(spec: str) -> list[tuple[str, int]]:
+    """Parse agent spec like 'researcher,coder:2,reviewer' into [(role, count)]."""
+    agents = []
+    if not spec:
+        return agents
+    for part in spec.split(","):
+        part = part.strip()
+        if ":" in part:
+            role, count_str = part.split(":", 1)
+            agents.append((role.strip(), int(count_str)))
+        else:
+            agents.append((part, 1))
+    return agents
+
+
 def create_team(
     phalanx_root: Path,
     db: StateDB,
     process_manager: ProcessManager,
     heartbeat_monitor: HeartbeatMonitor,
     task: str,
+    agents_spec: str = "coder",
     backend_name: str = "cursor",
     model: str | None = None,
     auto_approve: bool = True,
@@ -42,6 +58,28 @@ def create_team(
     # Create team directory
     team_dir = phalanx_root / "teams" / team_id
     team_dir.mkdir(parents=True, exist_ok=True)
+
+    # Spawn workers first
+    worker_specs = parse_agents_spec(agents_spec)
+    worker_index = 0
+    for role, count in worker_specs:
+        for _ in range(count):
+            worker_id = f"w{worker_index}-{role}"
+            spawn_agent(
+                phalanx_root=phalanx_root,
+                db=db,
+                process_manager=process_manager,
+                heartbeat_monitor=heartbeat_monitor,
+                team_id=team_id,
+                task=task,
+                role=role,
+                agent_id=worker_id,
+                backend_name=backend_name,
+                model=None,  # let router decide based on role
+                auto_approve=auto_approve,
+                config=config,
+            )
+            worker_index += 1
 
     # Spawn team lead
     spawn_agent(

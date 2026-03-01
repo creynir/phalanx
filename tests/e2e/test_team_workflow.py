@@ -42,6 +42,7 @@ class TestTeamWorkflow:
                 process_manager=process_manager,
                 heartbeat_monitor=heartbeat_monitor,
                 task="write unit tests",
+                agents_spec="coder:2",
                 backend_name="cursor",
             )
 
@@ -50,7 +51,7 @@ class TestTeamWorkflow:
         assert team is not None
         assert team["status"] == "running"
         agents = db.list_agents(team_id=team_id)
-        assert len(agents) == 1
+        assert len(agents) == 3  # 2 workers + 1 lead
 
         # Stop team
         stop_team(db, process_manager, team_id)

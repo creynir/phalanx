@@ -181,11 +181,12 @@ def run_agent(ctx, task, backend, model, auto_approve):
 
 @cli.command("create-team")
 @click.argument("task")
+@click.option("--agents", "-a", default="coder", help="Agent spec: role[:count],...")
 @click.option("--backend", "-b", default=None, help="Backend")
 @click.option("--model", "-m", default=None, help="Model")
 @click.option("--auto-approve/--no-auto-approve", default=True)
 @click.pass_context
-def create_team_cmd(ctx, task, backend, model, auto_approve):
+def create_team_cmd(ctx, task, agents, backend, model, auto_approve):
     """Create a team and start its team lead."""
     from phalanx.monitor.heartbeat import HeartbeatMonitor
     from phalanx.process.manager import ProcessManager
@@ -204,6 +205,7 @@ def create_team_cmd(ctx, task, backend, model, auto_approve):
         process_manager=pm,
         heartbeat_monitor=hb,
         task=task,
+        agents_spec=agents,
         backend_name=backend or config.default_backend,
         model=model or config.default_model,
         auto_approve=auto_approve,
