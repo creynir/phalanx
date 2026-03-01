@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import json
 import os
-import subprocess
-import sys
 from pathlib import Path
 
 import click
@@ -14,10 +12,8 @@ from rich.table import Table
 
 from phalanx import __version__
 from phalanx.config import load_config, set_config_value, get_config_value, ensure_global_config
-from phalanx.db import Database, GLOBAL_DB_PATH
-from phalanx.backends import get_backend, detect_default, detect_available, list_backends
-from phalanx.backends.model_router import resolve_model
-from phalanx.monitor.gc import gc_check
+from phalanx.db import Database
+from phalanx.backends import get_backend, detect_default, detect_available
 
 console = Console()
 
@@ -205,7 +201,7 @@ def models_show(as_json):
 def models_set(key, model):
     """Set model for a backend.role (e.g. cursor.coder opus-4.6)."""
     full_key = f"models.{key}"
-    cfg = set_config_value(full_key, model)
+    set_config_value(full_key, model)
     console.print(f"[green]Set[/green] {full_key} = {model}")
 
 

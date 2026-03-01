@@ -2,9 +2,6 @@
 
 from __future__ import annotations
 
-import time
-from pathlib import Path
-
 from phalanx.db import Database
 from phalanx.process.manager import kill_session
 

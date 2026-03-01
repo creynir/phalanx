@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
-from typing import Any
 
 from .schema import Artifact
 from .writer import get_artifact_path, TEAMS_DIR

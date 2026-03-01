@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
 from phalanx.db import Database
 from phalanx.process.manager import kill_session, session_exists
-from phalanx.artifacts.reader import read_artifact, read_team_result, list_artifacts
+from phalanx.artifacts.reader import read_team_result, list_artifacts
 from phalanx.comms.file_lock import release_agent_locks
 from phalanx.monitor.lifecycle import check_agent_health
 

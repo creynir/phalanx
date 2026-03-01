@@ -6,7 +6,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from phalanx.backends import get_backend, resolve_model
+from phalanx.backends import get_backend
 from phalanx.config import load_config
 from phalanx.db import Database
 from phalanx.monitor.gc import gc_check
