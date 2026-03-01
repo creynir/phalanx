@@ -2,46 +2,51 @@
 
 Open-source, vendor-agnostic multi-agent orchestration CLI.
 
-Phalanx lets you spin up teams of AI coding agents from any supported backend (Cursor, Claude Code, Gemini CLI, Codex CLI) and orchestrate them through a single unified interface.
+Phalanx lets you spin up teams of AI coding agents from any supported backend (Cursor, Claude Code, Gemini CLI, Codex CLI) and orchestrate them through a single unified interface. You talk to your agent naturally — it handles the rest.
 
 ## Install
 
 ```bash
-pip install -e ".[dev]"
+pip install phalanx-cli
+# or
+pipx install phalanx-cli
 ```
 
 Requires: Python 3.11+, tmux.
 
 ## Quick Start
 
-```bash
-# Single agent (proxies to your default backend)
-phalanx run "fix the failing tests"
-
-# Create a team of agents
-phalanx create-team --task "refactor auth module" --agents researcher,coder:2,reviewer --json
-
-# Check team status
-phalanx team-status <team-id> --json
-
-# Read results
-phalanx team-result <team-id> --json
-
-# Stop when done
-phalanx stop <team-id>
-```
-
-## IDE Integration
+Start an agent session and talk to it:
 
 ```bash
-phalanx init
+phalanx                          # interactive session (auto-detects backend)
+phalanx -b gemini                # use a specific backend
+phalanx run "fix the failing tests"  # with an initial prompt
 ```
 
-Auto-detects installed IDEs and deploys skill files:
-- **Cursor**: `.cursor/rules/phalanx.mdc`
-- **Claude Code**: `.claude/commands/phalanx.md`
-- **Gemini CLI**: `.gemini/phalanx-policy.md`
-- **Codex CLI**: `AGENTS.md`
+Then just ask your agent to create teams:
+
+> "Spin up a team of 2 coders and a reviewer to refactor the auth module"
+
+The agent knows how to use phalanx — it will create the team, monitor progress, collect results, and report back. You don't need to memorize any commands.
+
+## How It Works
+
+1. **You talk to your agent** — via `phalanx run` or your IDE (Cursor, Claude Code, etc.)
+2. **The agent creates teams** — spawning sub-agents in isolated tmux sessions
+3. **Agents communicate** — the main agent can message the team lead or any individual worker
+4. **Results flow back** — agents write artifacts, main agent reads and persists them
+
+### Agent Communication
+
+A key feature: agents don't just fire-and-forget. The main agent can:
+
+- **Message the team lead**: steer direction, ask for status updates, change priorities
+- **Message individual workers**: give specific feedback, request changes, unblock them
+- **Read artifacts**: check each agent's output as it becomes available
+- **Monitor health**: detect stalled or dead agents, retry automatically
+
+This creates a true collaborative workflow, not just parallel execution.
 
 ## Supported Backends
 
@@ -51,16 +56,6 @@ Auto-detects installed IDEs and deploys skill files:
 | Claude Code | `claude` | Native | Anthropic |
 | Gemini CLI | `gemini` | Phalanx-managed | Google |
 | Codex CLI | `codex` | Phalanx-managed | OpenAI |
-
-## Model Routing
-
-Phalanx automatically selects the best model per agent role and backend. Configurable in `~/.phalanx/config.toml`.
-
-```bash
-phalanx models show           # view routing table
-phalanx models set cursor.coder opus-4.6  # override
-phalanx models reset           # restore defaults
-```
 
 ## Agent Roles
 
@@ -72,6 +67,16 @@ phalanx models reset           # restore defaults
 | `architect` | Design decisions, high-stakes reasoning |
 | `orchestrator` | Team lead (auto-assigned) |
 
+Phalanx automatically selects the best model per role and backend. Configurable in `~/.phalanx/config.toml`.
+
+## Model Routing
+
+```bash
+phalanx models show                        # view routing table
+phalanx models set cursor.coder opus-4.6   # override a role
+phalanx models reset                       # restore defaults
+```
+
 ## Architecture
 
 - **State**: SQLite (WAL mode) at `~/.phalanx/state.db`
@@ -81,14 +86,15 @@ phalanx models reset           # restore defaults
 - **Stall detection**: stream.log monitoring with exponential backoff retry
 - **GC**: Opportunistic, runs on every command
 
-## Commands
+## CLI Reference
 
 ### User-Facing
+
 | Command | Description |
 |---------|-------------|
-| `phalanx run "prompt"` | Single agent session |
-| `phalanx init` | Deploy IDE skill files |
-| `phalanx create-team` | Create agent team |
+| `phalanx` | Start interactive agent session |
+| `phalanx run "prompt"` | Single agent session with prompt |
+| `phalanx --auto-approve create-team` | Create agent team |
 | `phalanx team-status <id>` | Team status |
 | `phalanx team-result <id>` | Read team results |
 | `phalanx message <id> "msg"` | Message team lead |
@@ -99,21 +105,38 @@ phalanx models reset           # restore defaults
 | `phalanx models show/set/reset/update` | Model routing |
 
 ### Agent Tools (used by spawned agents)
+
 | Command | Description |
 |---------|-------------|
 | `phalanx write-artifact` | Write structured result |
 | `phalanx agent-status` | Check peer status |
 | `phalanx agent-result <id>` | Read peer artifact |
-| `phalanx message-agent <id> "msg"` | Message a worker |
+| `phalanx message <team-id> "msg"` | Message team lead |
+| `phalanx message-agent <id> "msg"` | Message a specific worker |
 | `phalanx lock/unlock <path>` | File locking |
 
-## Testing
+## Develop Locally
 
 ```bash
-pytest tests/unit/          # 125 unit tests
-pytest tests/integration/   # 26 integration tests (requires tmux)
-pytest tests/e2e/           # 11 end-to-end tests
-pytest tests/               # all 162 tests
+git clone https://github.com/creynir/phalanx.git
+cd phalanx
+pip install -e ".[dev]"
+```
+
+Run tests:
+
+```bash
+pytest tests/unit/          # unit tests
+pytest tests/integration/   # integration tests (requires tmux)
+pytest tests/e2e/           # end-to-end tests
+pytest tests/               # all 211 tests
+```
+
+Pre-commit hooks (ruff lint + format) are configured — install with:
+
+```bash
+pip install pre-commit
+pre-commit install
 ```
 
 ## Configuration

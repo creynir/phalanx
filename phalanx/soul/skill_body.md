@@ -17,8 +17,14 @@ phalanx team-status <team-id> --json
 # Get results when complete
 phalanx team-result <team-id> --json
 
-# Send a message to team lead
+# Send a message to team lead (steer direction, ask for updates)
 phalanx message <team-id> "instruction"
+
+# Send a message to a specific worker agent (give feedback, unblock)
+phalanx message-agent <agent-id> "instruction"
+
+# Read a specific agent's artifact
+phalanx agent-result <agent-id> --json
 
 # Stop and clean up
 phalanx stop <team-id>
@@ -38,9 +44,10 @@ Example: `--agents researcher,coder:2,reviewer`
 ## Workflow
 1. Create team: `phalanx --auto-approve create-team --task "..." --agents researcher,coder:2 --json`
 2. Poll status: `phalanx team-status <team-id> --json` (every 30-60s)
-3. Read results: `phalanx team-result <team-id> --json`
-4. **Persist results yourself** — write important findings to workspace files
-5. Clean up: `phalanx stop <team-id>`
+3. Steer the team: `phalanx message <team-id> "focus on X"` or message individual agents
+4. Read results: `phalanx team-result <team-id> --json` or per-agent: `phalanx agent-result <agent-id> --json`
+5. **Persist results yourself** — write important findings to workspace files
+6. Clean up: `phalanx stop <team-id>`
 
 ## Critical Rules
 - Team artifacts are **EPHEMERAL** — deleted after 24h of inactivity
