@@ -16,12 +16,16 @@ Requires: Python 3.11+, tmux.
 
 ## Quick Start
 
+Initialize Phalanx in your workspace:
+
+```bash
+phalanx init
+```
+
 Start an agent session and talk to it:
 
 ```bash
-phalanx                          # interactive session (auto-detects backend)
-phalanx -b gemini                # use a specific backend
-phalanx run "fix the failing tests"  # with an initial prompt
+phalanx run-agent "fix the failing tests"
 ```
 
 Then just ask your agent to create teams:
@@ -79,12 +83,12 @@ phalanx models reset                       # restore defaults
 
 ## Architecture
 
-- **State**: SQLite (WAL mode) at `~/.phalanx/state.db`
-- **Process isolation**: tmux sessions per agent
-- **Artifacts**: Ephemeral JSON (deleted after 24h inactivity)
-- **File locking**: Advisory locks via SQLite
-- **Stall detection**: stream.log monitoring with exponential backoff retry
-- **GC**: Opportunistic, runs on every command
+- **State**: SQLite (WAL mode) at `.phalanx/state.db`
+- **TUI Process Isolation**: Agents run interactively inside background `tmux` sessions. Output is captured via `pipe-pane`, meaning Phalanx can screen-scrape and deterministically handle CLI prompts (like workspace trust or tool approval) without relying on fragile prompt engineering.
+- **Real-Time Communication**: Because agents are running live in `tmux`, Phalanx can send them keystrokes or interrupt them (`Ctrl+C`) to deliver messages instantly, instead of relying on slow, costly session restarts via `--resume`.
+- **Artifacts**: Ephemeral JSON storing structured outputs per agent.
+- **Stall Detection**: `stream.log` (from `tmux`) is monitored via a Heartbeat system. If an agent hangs or crashes, Phalanx detects the lack of output, interrupts, and prompts the agent to continue or fail gracefully.
+- **GC**: Opportunistic cleanup of dead teams, running on standard CLI commands.
 
 ## CLI Reference
 
@@ -92,72 +96,56 @@ phalanx models reset                       # restore defaults
 
 | Command | Description |
 |---------|-------------|
-| `phalanx` | Start interactive agent session |
-| `phalanx run "prompt"` | Single agent session with prompt |
-| `phalanx --auto-approve create-team` | Create agent team |
-| `phalanx team-status <id>` | Team status |
-| `phalanx team-result <id>` | Read team results |
-| `phalanx message <id> "msg"` | Message team lead |
-| `phalanx stop <id>` | Stop team |
-| `phalanx resume <id>` | Resume team |
-| `phalanx status` | List all teams |
-| `phalanx config show/set` | Configuration |
-| `phalanx models show/set/reset/update` | Model routing |
+| `phalanx init` | Initialize `.phalanx` in workspace, generate skill files |
+| `phalanx run-agent "task"` | Spawn a single interactive agent (no team lead) |
+| `phalanx create-team "task"` | Create a team and start its team lead |
+| `phalanx monitor <id>` | Attach a blocking DEM-style monitoring loop |
+| `phalanx team-status [id]` | View team status summary |
+| `phalanx agent-status [id]` | View specific agent status |
+| `phalanx team-result <id>` | Read team lead's final artifact |
+| `phalanx message <id> "msg"` | Message a team lead |
+| `phalanx message-agent <id> "msg"` | Message a specific agent |
+| `phalanx send-keys <id> <keys>` | Send raw keystrokes to an agent's `tmux` pane |
+| `phalanx stop <id>` | Stop a team (kills processes) |
+| `phalanx status` | List all running agents across all teams |
+| `phalanx gc` | Clean up old data and dead teams |
 
 ### Agent Tools (used by spawned agents)
 
 | Command | Description |
 |---------|-------------|
-| `phalanx write-artifact` | Write structured result |
-| `phalanx agent-status` | Check peer status |
+| `phalanx spawn-agent` | Spawn a sub-agent (used by team lead) |
+| `phalanx write-artifact` | Write structured result (success/failure/escalation) |
 | `phalanx agent-result <id>` | Read peer artifact |
-| `phalanx message <team-id> "msg"` | Message team lead |
-| `phalanx message-agent <id> "msg"` | Message a specific worker |
-| `phalanx lock/unlock <path>` | File locking |
+| `phalanx lock/unlock <path>` | Advisory file locking to prevent collisions |
 
 ## Develop Locally
 
 ```bash
 git clone https://github.com/creynir/phalanx.git
 cd phalanx
-pip install -e ".[dev]"
+uv sync
+uv pip install -e ".[dev]"
 ```
 
 Run tests:
 
 ```bash
-pytest tests/unit/          # unit tests
-pytest tests/integration/   # integration tests (requires tmux)
-pytest tests/e2e/           # end-to-end tests
-pytest tests/               # all 211 tests
-```
-
-Pre-commit hooks (ruff lint + format) are configured — install with:
-
-```bash
-pip install pre-commit
-pre-commit install
+uv run pytest tests/
 ```
 
 ## Configuration
 
-Global: `~/.phalanx/config.toml`
-Workspace override: `.phalanx/config.toml`
+Workspace overrides can be edited at `.phalanx/config.json`:
 
-```toml
-[defaults]
-backend = "cursor"
-
-[timeouts]
-agent_inactivity_minutes = 30
-team_gc_hours = 24
-stall_seconds = 180
-
-[models.cursor]
-orchestrator = "sonnet-4.6"
-coder = "sonnet-4.6"
-researcher = "gemini-3.1-pro"
-default = "gemini-3.1-pro"
+```json
+{
+  "default_backend": "cursor",
+  "idle_timeout_seconds": 1800,
+  "max_runtime_seconds": 1800,
+  "stall_check_interval": 20,
+  "auto_approve": true
+}
 ```
 
 ## License
