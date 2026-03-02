@@ -564,6 +564,46 @@ def resume_cmd(ctx, team_id, all_agents):
             click.echo(f"  Resumed: {agent_id}")
 
 
+# ── resume-agent ────────────────────────────────────────────────────
+
+
+@cli.command("resume-agent")
+@click.argument("agent_id")
+@click.pass_context
+def resume_agent_cmd(ctx, agent_id):
+    """Resume a single dead/suspended agent."""
+    from phalanx.monitor.heartbeat import HeartbeatMonitor
+    from phalanx.process.manager import ProcessManager
+    from phalanx.team.orchestrator import resume_single_agent
+
+    root = _get_root(ctx)
+    phalanx_config = _get_config(root)
+    db = _get_db(root)
+    pm = ProcessManager(root)
+    hb = HeartbeatMonitor(idle_timeout=phalanx_config.idle_timeout_seconds)
+
+    try:
+        result = resume_single_agent(
+            phalanx_root=root,
+            db=db,
+            process_manager=pm,
+            heartbeat_monitor=hb,
+            agent_id=agent_id,
+            auto_approve=ctx.obj.get("auto_approve", False),
+        )
+    except ValueError as e:
+        if ctx.obj.get("json_mode"):
+            _json_output({"ok": False, "error": str(e)})
+        else:
+            click.echo(f"Error: {e}", err=True)
+        raise SystemExit(1)
+
+    if ctx.obj.get("json_mode"):
+        _json_output({"ok": True, **result})
+    else:
+        click.echo(f"Agent {agent_id} resumed (team {result['team_id']})")
+
+
 # ── stop / stop-agent ───────────────────────────────────────────────
 
 

@@ -11,6 +11,7 @@
 - `phalanx agent-result <agent-id>` — read worker artifact when complete
 - `phalanx message-agent <agent-id> "msg"` — send instruction to a specific worker
 - `phalanx broadcast <team-id> "msg"` — send message to ALL workers at once
+- `phalanx resume-agent <agent-id>` — restart a dead or suspended worker
 - `phalanx post "msg"` — post to the shared team feed (all agents can read)
 - `phalanx feed` — read the shared team feed for inter-agent messages
 - `phalanx write-artifact --status <status> --output '<json>'` — write your team result
@@ -32,9 +33,10 @@ When you receive `[PHALANX EVENT] worker_blocked: worker <id>`:
 2. Send a targeted nudge: `phalanx message-agent <id> "Continue your task. Complete it and write your artifact."`.
 
 When you receive `[PHALANX EVENT] worker_dead: worker <id>` or `worker_timeout: worker <id>`:
-1. Record the failure.
-2. If other workers are still running, continue waiting.
-3. If no workers remain, write your team artifact with status "failure".
+1. Run `phalanx agent-status <id>` to assess.
+2. Try to restart: `phalanx resume-agent <id>`. If it succeeds, continue waiting.
+3. If resume fails or the worker dies again, record the failure.
+4. If no workers remain, write your team artifact with status "failure".
 
 ## Fallback Polling
 If you have not received any `[PHALANX EVENT]` for 2 minutes, run `phalanx agent-status --json` manually to check all workers. Then take appropriate action per the rules above.

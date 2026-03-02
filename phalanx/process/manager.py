@@ -214,6 +214,7 @@ class ProcessManager:
         backend: AgentBackend,
         chat_id: str,
         working_dir: str | None = None,
+        auto_approve: bool = False,
     ) -> AgentProcess:
         """Resume an agent session using --resume/--continue."""
         session_name = self._session_name(team_id, agent_id)
@@ -237,6 +238,13 @@ class ProcessManager:
         self._setup_agent_env(pane, agent_id, team_id)
 
         cmd_parts = backend.build_resume_command(chat_id)
+
+        if auto_approve:
+            approve_flags = backend.auto_approve_flags()
+            for flag in approve_flags:
+                if flag not in cmd_parts:
+                    cmd_parts.insert(1, flag)
+
         cmd_str = shlex.join(cmd_parts)
         pane.send_keys(cmd_str, enter=True)
 

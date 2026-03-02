@@ -87,6 +87,7 @@ def resume_team(
                 agent_id=agent_id,
                 backend=backend,
                 chat_id=chat_id,
+                auto_approve=auto_approve,
             )
         else:
             task_file = phalanx_root / "teams" / team_id / "agents" / agent_id / "task.md"
@@ -127,6 +128,70 @@ def resume_team(
         _spawn_team_monitor(phalanx_root, team_id)
 
     return {"team_id": team_id, "resumed_agents": resumed}
+
+
+def resume_single_agent(
+    phalanx_root: Path,
+    db: StateDB,
+    process_manager: ProcessManager,
+    heartbeat_monitor: HeartbeatMonitor,
+    agent_id: str,
+    auto_approve: bool = False,
+) -> dict:
+    """Resume a single dead/suspended agent within its team."""
+    from phalanx.backends import get_backend
+
+    agent = db.get_agent(agent_id)
+    if agent is None:
+        raise ValueError(f"Agent {agent_id} not found")
+
+    if agent["status"] not in ("dead", "suspended"):
+        raise ValueError(f"Agent {agent_id} is {agent['status']}, not dead/suspended")
+
+    team_id = agent["team_id"]
+    is_lead = agent["role"] == "lead"
+    backend = get_backend(agent.get("backend", "cursor"))
+    chat_id = agent.get("chat_id")
+
+    if chat_id:
+        agent_proc = process_manager.spawn_resume(
+            team_id=team_id,
+            agent_id=agent_id,
+            backend=backend,
+            chat_id=chat_id,
+            auto_approve=auto_approve,
+        )
+    else:
+        task_file = phalanx_root / "teams" / team_id / "agents" / agent_id / "task.md"
+        soul_dir = Path(__file__).parent.parent / "soul"
+        soul_file = soul_dir / ("team_lead.md" if is_lead else "worker.md")
+        if not soul_file.exists():
+            soul_file = None
+
+        if not task_file.exists():
+            raw_task = agent.get("task", "")
+            if not raw_task:
+                raise ValueError(
+                    f"Cannot resume agent {agent_id}: no chat_id, no task.md, no task in DB"
+                )
+            task_file.parent.mkdir(parents=True, exist_ok=True)
+            task_file.write_text(raw_task, encoding="utf-8")
+
+        agent_proc = process_manager.spawn(
+            team_id=team_id,
+            agent_id=agent_id,
+            backend=backend,
+            prompt=str(task_file),
+            soul_file=soul_file,
+            model=agent.get("model"),
+            auto_approve=auto_approve,
+        )
+
+    db.update_agent(agent_id, status="running")
+    heartbeat_monitor.register(agent_id, agent_proc.stream_log)
+    logger.info("Resumed agent %s in team %s", agent_id, team_id)
+
+    return {"agent_id": agent_id, "team_id": team_id, "status": "running"}
 
 
 def _kill_team_monitor(team_id: str) -> None:
