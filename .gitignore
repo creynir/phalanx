@@ -22,3 +22,11 @@ htmlcov/
 *.db-shm
 
 .cursor/rules/phalanx.mdc
+
+# Agent-generated scratch files — never commit these
+HANDOFF.md
+AGENTS.md
+hello.py
+*-config.json
+.claude/
+.gemini/
