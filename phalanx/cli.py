@@ -76,14 +76,23 @@ def _json_output(data: dict) -> None:
 @click.option(
     "--auto-approve", is_flag=True, default=False, help="Enable auto-approve for all spawned agents"
 )
+@click.option("--backend", "-b", default=None, help="Backend (cursor, claude, gemini, codex)")
+@click.option("--model", "-m", default=None, help="Model to use for the agent")
 @click.option("--verbose", "-v", is_flag=True, help="Verbose logging")
 @click.pass_context
-def cli(ctx, root, json_mode, auto_approve, verbose):
-    """Phalanx — Multi-Agent Orchestration System."""
+def cli(ctx, root, json_mode, auto_approve, backend, model, verbose):
+    """Phalanx — Multi-Agent Orchestration System.
+
+    Run without a subcommand to launch your agent with phalanx skills:
+
+      phalanx --auto-approve --backend cursor --model opus-4.6-thinking
+    """
     ctx.ensure_object(dict)
     ctx.obj["root"] = root
     ctx.obj["json_mode"] = json_mode
     ctx.obj["auto_approve"] = auto_approve
+    ctx.obj["backend"] = backend
+    ctx.obj["model"] = model
 
     level = logging.DEBUG if verbose else logging.INFO
     logging.basicConfig(
@@ -93,7 +102,65 @@ def cli(ctx, root, json_mode, auto_approve, verbose):
     )
 
     if ctx.invoked_subcommand is None:
-        click.echo(ctx.get_help())
+        _launch_agent(ctx, backend, model, auto_approve)
+
+
+# ── default: launch agent ────────────────────────────────────────────
+
+
+def _launch_agent(
+    ctx: click.Context, backend: str | None, model: str | None, auto_approve: bool
+) -> None:
+    """Launch the backend agent CLI with phalanx skills installed.
+
+    1. Resolve backend (flag → config → auto-detect)
+    2. Run phalanx init if needed (creates .phalanx/, deploys skills)
+    3. Check/update skills for the backend
+    4. exec the backend binary, replacing this process
+    """
+    from phalanx.backends.registry import get_backend, detect_backend
+    from phalanx.init_cmd import check_and_prompt_skill, init_workspace
+
+    root = _get_root(ctx)
+
+    # Auto-init if .phalanx doesn't exist yet
+    if not root.exists():
+        workspace = root.parent if root.name == ".phalanx" else Path.cwd()
+        click.echo("Initializing phalanx...")
+        init_workspace(workspace)
+        root.mkdir(parents=True, exist_ok=True)
+
+    config = _get_config(root)
+    backend_name = backend or config.default_backend
+
+    # Resolve backend
+    if backend_name:
+        be = get_backend(backend_name)
+    else:
+        be = detect_backend()
+        if be is None:
+            click.echo(
+                "Error: No agent CLI found. Install one of: cursor (agent), claude, gemini, codex",
+                err=True,
+            )
+            raise SystemExit(1)
+        backend_name = be.name()
+
+    # Ensure skills are installed/up-to-date
+    check_and_prompt_skill(backend_name, workspace=Path.cwd())
+
+    # Build the command
+    binary = be.binary_name()
+    cmd = [binary]
+
+    if auto_approve:
+        cmd.extend(be.auto_approve_flags())
+
+    if model or config.default_model:
+        cmd.extend(["--model", model or config.default_model])
+
+    click.echo(f"Launching {backend_name} agent...")
+    os.execvp(binary, cmd)
 
 
 # ── create-team ──────────────────────────────────────────────────────

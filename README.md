@@ -16,25 +16,24 @@ Requires: Python 3.11+, tmux, git.
 
 ## Quick Start
 
-Initialize Phalanx in your workspace:
-
 ```bash
-phalanx init
+phalanx --auto-approve --backend cursor --model opus-4.6-thinking
 ```
 
-Start your main agent:
-
-```bash
-phalanx --auto-approve monitor
-```
-
-Then just talk to it:
+That's it. Phalanx installs its skill into your agent CLI, then launches it. You talk to your agent as usual:
 
 > "Spin up a team of 2 coders and a reviewer to refactor the auth module"
 
 > "Have 3 agents audit the codebase — one for security, one for performance, one for reliability — and give me a consolidated report"
 
-The agent handles everything: creating the team, assigning tasks, monitoring workers, collecting results, and reporting back. You don't need to memorize any commands.
+The agent knows phalanx commands via the installed skill. It handles everything: creating the team, assigning tasks, monitoring workers, collecting results, and reporting back. You don't need to memorize any commands.
+
+Flags:
+- `--backend` — which agent CLI to launch (`cursor`, `claude`, `gemini`, `codex`). Auto-detected if omitted.
+- `--model` — model to use. Optional.
+- `--auto-approve` — enable auto-approval of tool calls in the agent.
+
+You can also run phalanx commands directly as a tool (e.g. from an already-running agent session) — see CLI Reference below.
 
 ## How It Works
 

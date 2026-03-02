@@ -31,9 +31,17 @@ def list_backends() -> list[str]:
     return list(_BACKENDS.keys())
 
 
+_BINARY_NAMES: dict[str, str] = {
+    "cursor": "agent",
+    "claude": "claude",
+    "gemini": "gemini",
+    "codex": "codex",
+}
+
+
 def detect_backend() -> AgentBackend | None:
-    """Auto-detect an available backend by checking PATH."""
-    for name in ("cursor", "claude", "gemini", "codex"):
-        if shutil.which(name):
+    """Auto-detect an available backend by checking PATH for actual binaries."""
+    for name, binary in _BINARY_NAMES.items():
+        if shutil.which(binary):
             return get_backend(name)
     return None
