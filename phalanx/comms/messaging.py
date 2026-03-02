@@ -28,15 +28,9 @@ def deliver_message(
 ) -> bool:
     """Deliver a message to an agent's tmux pane via send-keys.
 
-    The message is formatted with delimiter for multi-message separation.
-    Terminal input buffer handles queuing — no interrupt needed.
+    Always delivers via file to avoid shell injection from message content.
     """
-    formatted = f'- "{message}";'
-
-    if len(formatted) > LONG_MESSAGE_THRESHOLD:
-        return _deliver_via_file(process_manager, agent_id, formatted, message_dir)
-
-    return process_manager.send_keys(agent_id, formatted, enter=True)
+    return _deliver_via_file(process_manager, agent_id, message, message_dir)
 
 
 def broadcast_message(
@@ -83,5 +77,5 @@ def _deliver_via_file(
     msg_file = message_dir / f"msg_{agent_id}_{hash(message) & 0xFFFFFFFF:08x}.txt"
     msg_file.write_text(message, encoding="utf-8")
 
-    delivery_text = f'- "Read the message at: {msg_file}";'
+    delivery_text = f"Read and respond to the message at: {msg_file}"
     return process_manager.send_keys(agent_id, delivery_text, enter=True)

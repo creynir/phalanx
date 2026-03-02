@@ -73,6 +73,8 @@ def create_team_from_config(
             agent_id=agent_spec.agent_id,
             backend_name=backend_name,
             model=model,
+            worktree=agent_spec.worktree,
+            working_dir=agent_spec.worktree,
             auto_approve=auto_approve,
             config=config,
         )

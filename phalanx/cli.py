@@ -257,6 +257,10 @@ def team_monitor_cmd(ctx, team_id):
 
     sd = StallDetector(pm, hb, idle_timeout=config.idle_timeout_seconds, db=db)
 
+    lead_agents = [a for a in agents if a.get("role") == "lead"]
+    lead_agent_id = lead_agents[0]["id"] if lead_agents else None
+    message_dir = root / "teams" / team_id / "messages"
+
     click.echo(f"Team monitor started for {team_id} ({len(agents)} agents)")
     run_team_monitor(
         team_id=team_id,
@@ -266,6 +270,8 @@ def team_monitor_cmd(ctx, team_id):
         stall_detector=sd,
         poll_interval=config.monitor_poll_interval,
         idle_timeout=config.idle_timeout_seconds,
+        lead_agent_id=lead_agent_id,
+        message_dir=message_dir,
     )
 
 
@@ -621,6 +627,19 @@ def write_artifact_cmd(ctx, status, output, warnings, json_flag):
 
     agent_id = os.environ.get("PHALANX_AGENT_ID", "")
     team_id = os.environ.get("PHALANX_TEAM_ID", "")
+
+    if not agent_id:
+        click.echo(
+            "Error: PHALANX_AGENT_ID not set — cannot write artifact outside an agent session",
+            err=True,
+        )
+        raise SystemExit(1)
+    if not team_id:
+        click.echo(
+            "Error: PHALANX_TEAM_ID not set — cannot write artifact outside an agent session",
+            err=True,
+        )
+        raise SystemExit(1)
 
     try:
         output_data = json.loads(output) if json_flag else output

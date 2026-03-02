@@ -42,6 +42,9 @@ class HeartbeatState:
         return (now - self.last_heartbeat) > self.idle_timeout
 
 
+STREAM_LOG_MISSING_WARN_AFTER = 60  # seconds
+
+
 class HeartbeatMonitor:
     """Monitors stream.log files for agent activity.
 
@@ -58,6 +61,8 @@ class HeartbeatMonitor:
     def __init__(self, idle_timeout: int = IDLE_TIMEOUT_SECONDS) -> None:
         self._states: dict[str, HeartbeatState] = {}
         self._idle_timeout = idle_timeout
+        self._first_seen: dict[str, float] = {}
+        self._warned_missing: set[str] = set()
 
     def register(self, agent_id: str, stream_log: Path) -> None:
         """Start tracking an agent's stream.log."""
@@ -67,6 +72,7 @@ class HeartbeatMonitor:
             last_heartbeat=time.time(),
             idle_timeout=self._idle_timeout,
         )
+        self._first_seen[agent_id] = time.time()
         logger.debug("Registered heartbeat for agent %s at %s", agent_id, stream_log)
 
     def unregister(self, agent_id: str) -> None:
@@ -87,6 +93,15 @@ class HeartbeatMonitor:
             stat = state.stream_log.stat()
         except FileNotFoundError:
             logger.debug("stream.log not found for %s", agent_id)
+            if agent_id not in self._warned_missing:
+                registered_at = self._first_seen.get(agent_id, time.time())
+                if (time.time() - registered_at) > STREAM_LOG_MISSING_WARN_AFTER:
+                    logger.warning(
+                        "stream.log still not found for agent %s after %ds — agent may have failed to start",
+                        agent_id,
+                        STREAM_LOG_MISSING_WARN_AFTER,
+                    )
+                    self._warned_missing.add(agent_id)
             return state
 
         current_mtime = stat.st_mtime

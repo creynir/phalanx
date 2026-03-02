@@ -212,6 +212,9 @@ class StallDetector:
         self._last_screen_check[agent_id] = now
         screen = self._pm.capture_screen(agent_id)
         if screen is None:
+            logger.warning(
+                "capture_screen returned None for agent %s — tmux session may be gone", agent_id
+            )
             return None
 
         # 5. Check for blocked_on_prompt
@@ -273,7 +276,8 @@ class StallDetector:
         try:
             agent = self._db.get_agent(agent_id)
             return agent is not None and agent.get("artifact_status") is not None
-        except Exception:
+        except Exception as e:
+            logger.warning("Failed to check artifact status for %s: %s", agent_id, e)
             return False
 
     def _detect_prompt(self, agent_id: str, screen: list[str]) -> PromptDetection | None:

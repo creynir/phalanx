@@ -163,28 +163,15 @@ class ProcessManager:
         )
 
         # Set up pipe-pane to capture all TUI output into stream.log
-        self._setup_pipe_pane(session_name, stream_log)
+        try:
+            self._setup_pipe_pane(session_name, stream_log)
+        except Exception as e:
+            logger.error("Failed to set up pipe-pane for session %s: %s", session_name, e)
+            self._kill_session(session_name)
+            raise
 
-        # Export identity env vars so phalanx write-artifact knows who is running.
-        # tmux environment= kwarg is not exported to the shell — must be set explicitly.
-        export_cmd = (
-            f"export PHALANX_AGENT_ID={agent_id} "
-            f"PHALANX_TEAM_ID={team_id} "
-            f"PHALANX_ROOT={str(self._root)}"
-        )
         pane = session.active_window.active_pane
-        pane.send_keys(export_cmd, enter=True)
-
-        # When running from a dev source checkout, shadow the installed phalanx
-        # binary with a shell function that calls `uv run --project <src> phalanx`.
-        # This ensures agents always use the current source, not a stale wheel.
-        if _SOURCE_ROOT is not None:
-            uv_bin = shlex.quote(_resolve_uv_bin())
-            src = shlex.quote(str(_SOURCE_ROOT))
-            alias_cmd = (
-                f'phalanx() {{ {uv_bin} run --project {src} phalanx "$@"; }}; export -f phalanx'
-            )
-            pane.send_keys(alias_cmd, enter=True)
+        self._setup_agent_env(pane, agent_id, team_id)
 
         # Build the TUI command (no --print)
         cmd_parts = backend.build_start_command(
@@ -246,10 +233,11 @@ class ProcessManager:
 
         self._setup_pipe_pane(session_name, stream_log)
 
+        pane = session.active_window.active_pane
+        self._setup_agent_env(pane, agent_id, team_id)
+
         cmd_parts = backend.build_resume_command(chat_id)
         cmd_str = shlex.join(cmd_parts)
-
-        pane = session.active_window.active_pane
         pane.send_keys(cmd_str, enter=True)
 
         agent_proc = AgentProcess(
@@ -435,6 +423,27 @@ class ProcessManager:
 
     # --- internal ---
 
+    def _setup_agent_env(self, pane: libtmux.Pane, agent_id: str, team_id: str) -> None:
+        """Export identity env vars and dev phalanx alias into the agent's shell.
+
+        Called from both spawn() and spawn_resume() so resumed agents have the
+        same environment as freshly spawned ones.
+        """
+        export_cmd = (
+            f"export PHALANX_AGENT_ID={shlex.quote(agent_id)} "
+            f"PHALANX_TEAM_ID={shlex.quote(team_id)} "
+            f"PHALANX_ROOT={shlex.quote(str(self._root))}"
+        )
+        pane.send_keys(export_cmd, enter=True)
+
+        if _SOURCE_ROOT is not None:
+            uv_bin = shlex.quote(_resolve_uv_bin())
+            src = shlex.quote(str(_SOURCE_ROOT))
+            alias_cmd = (
+                f'phalanx() {{ {uv_bin} run --project {src} phalanx "$@"; }}; export -f phalanx'
+            )
+            pane.send_keys(alias_cmd, enter=True)
+
     def _setup_pipe_pane(self, session_name: str, stream_log: Path) -> None:
         """Set up tmux pipe-pane to stream TUI output into stream.log."""
         subprocess.run(
@@ -456,8 +465,8 @@ class ProcessManager:
         try:
             session = self.server.sessions.get(session_name=session_name)
             session.kill()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("Failed to kill session %s: %s", session_name, e)
 
 
 def _looks_like_prompt(text: str) -> bool:

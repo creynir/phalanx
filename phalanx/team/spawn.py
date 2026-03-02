@@ -56,6 +56,22 @@ def spawn_agent(
 
     task_file = _write_task_file(phalanx_root, team_id, agent_id, task, soul_file=soul_file)
 
+    try:
+        agent_proc = process_manager.spawn(
+            team_id=team_id,
+            agent_id=agent_id,
+            backend=backend,
+            prompt=str(task_file),
+            soul_file=None,  # soul is already merged into task_file
+            model=model,
+            worktree=worktree,
+            working_dir=working_dir,
+            auto_approve=auto_approve,
+        )
+    except Exception:
+        logger.error("Failed to spawn agent %s", agent_id)
+        raise
+
     db.create_agent(
         agent_id=agent_id,
         team_id=team_id,
@@ -64,26 +80,6 @@ def spawn_agent(
         model=model,
         backend=backend_name,
         worktree=worktree,
-    )
-
-    env_vars = {
-        "PHALANX_AGENT_ID": agent_id,
-        "PHALANX_TEAM_ID": team_id,
-        "PHALANX_ROOT": str(phalanx_root),
-    }
-    for k, v in env_vars.items():
-        os.environ[k] = v
-
-    agent_proc = process_manager.spawn(
-        team_id=team_id,
-        agent_id=agent_id,
-        backend=backend,
-        prompt=str(task_file),
-        soul_file=None,  # soul is already merged into task_file
-        model=model,
-        worktree=worktree,
-        working_dir=working_dir,
-        auto_approve=auto_approve,
     )
 
     db.update_agent(agent_id, status="running", pid=os.getpid())

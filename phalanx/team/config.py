@@ -74,6 +74,7 @@ class AgentSpec:
     role: str
     prompt: str
     model: str | None = None
+    worktree: str | None = None
 
     # Generated at creation time
     agent_id: str = ""
@@ -100,6 +101,7 @@ class AgentSpec:
             "role": self.role,
             "prompt": self.prompt,
             "model": self.model,
+            "worktree": self.worktree,
             "agent_id": self.agent_id,
         }
 
@@ -177,6 +179,7 @@ def parse_team_config(data: dict) -> TeamConfig:
                 role=agent_data["role"],
                 prompt=agent_data["prompt"],
                 model=agent_data.get("model"),
+                worktree=agent_data.get("worktree"),
             )
         )
 

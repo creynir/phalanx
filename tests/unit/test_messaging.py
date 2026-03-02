@@ -12,14 +12,22 @@ from phalanx.comms.messaging import (
 
 
 class TestDeliverMessage:
-    def test_short_message_direct(self):
+    def test_short_message_via_file(self, tmp_path):
+        """All messages are delivered via file to prevent shell injection."""
         pm = MagicMock()
         pm.send_keys.return_value = True
 
-        result = deliver_message(pm, "agent-1", "do this")
+        result = deliver_message(pm, "agent-1", "do this", message_dir=tmp_path)
         assert result is True
         pm.interrupt_agent.assert_not_called()
-        pm.send_keys.assert_called_once_with("agent-1", '- "do this";', enter=True)
+
+        call_args = pm.send_keys.call_args[0]
+        assert call_args[0] == "agent-1"
+        assert "Read and respond to the message at:" in call_args[1]
+
+        files = list(tmp_path.glob("msg_agent-1_*.txt"))
+        assert len(files) == 1
+        assert files[0].read_text() == "do this"
 
     def test_long_message_via_file(self, tmp_path):
         pm = MagicMock()
@@ -32,25 +40,29 @@ class TestDeliverMessage:
 
         call_args = pm.send_keys.call_args[0]
         assert call_args[0] == "agent-1"
-        assert "Read the message at" in call_args[1]
+        assert "Read and respond to the message at:" in call_args[1]
 
         files = list(tmp_path.glob("msg_agent-1_*.txt"))
         assert len(files) == 1
 
-    def test_session_not_found(self):
+    def test_session_not_found(self, tmp_path):
         pm = MagicMock()
         pm.send_keys.return_value = False
 
-        result = deliver_message(pm, "nonexistent", "hello")
+        result = deliver_message(pm, "nonexistent", "hello", message_dir=tmp_path)
         assert result is False
 
-    def test_message_formatted_with_delimiter(self):
+    def test_no_shell_injection_in_delivery_text(self, tmp_path):
+        """Delivery text must not contain the message content inline."""
         pm = MagicMock()
         pm.send_keys.return_value = True
 
-        deliver_message(pm, "agent-1", "check auth module")
+        malicious = 'evil"; rm -rf /;'
+        deliver_message(pm, "agent-1", malicious, message_dir=tmp_path)
         call_args = pm.send_keys.call_args[0]
-        assert call_args[1] == '- "check auth module";'
+        # The delivery text should not contain the malicious content
+        assert "evil" not in call_args[1]
+        assert "rm -rf" not in call_args[1]
 
 
 class TestBroadcastMessage:
