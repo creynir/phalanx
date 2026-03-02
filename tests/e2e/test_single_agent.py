@@ -19,7 +19,7 @@ class TestSingleAgent:
             timeout=10,
         )
         assert result.returncode == 0
-        assert "0.3.3" in result.stdout
+        assert "0.3.4" in result.stdout
 
     def test_phalanx_help(self):
         result = subprocess.run(

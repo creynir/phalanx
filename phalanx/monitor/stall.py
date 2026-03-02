@@ -134,8 +134,23 @@ def _check_error_prompt(lines: list[str]) -> bool:
 
 @_register_pattern("agent_idle")
 def _check_agent_idle(lines: list[str]) -> bool:
-    """Detect if the agent has returned to its input prompt."""
-    tail = "\n".join(lines[-5:]) if lines else ""
+    """Detect if the agent has returned to its input prompt.
+
+    Must NOT fire when the agent is actively generating or running a tool —
+    the TUI chrome (follow-up bar, bottom bar) stays visible during work.
+    """
+    tail = "\n".join(lines[-8:]) if lines else ""
+
+    active_indicators = [
+        "Generating",
+        "Running",
+        "Thinking",
+        "ctrl+c to stop",
+        "Waiting for approval",
+    ]
+    if any(ind in tail for ind in active_indicators):
+        return False
+
     return (
         "❯" in tail  # Claude Code prompt
         or "? for shortcuts" in tail  # Claude Code help hint
