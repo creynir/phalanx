@@ -15,6 +15,7 @@ from __future__ import annotations
 import logging
 import shlex
 import subprocess
+import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -27,6 +28,41 @@ logger = logging.getLogger(__name__)
 
 INTERRUPT_WAIT_SECONDS = 10
 INTERRUPT_POLL_INTERVAL = 0.5
+
+
+def _find_source_root() -> Path | None:
+    """Return the phalanx source project root if we're running from a dev checkout.
+
+    Walks up from this file to find a pyproject.toml, then verifies it's the
+    phalanx project. Returns None when running from an installed wheel.
+    """
+    candidate = Path(__file__).resolve().parent
+    for _ in range(4):
+        candidate = candidate.parent
+        pyproject = candidate / "pyproject.toml"
+        if pyproject.exists() and 'name = "phalanx' in pyproject.read_text():
+            return candidate
+    return None
+
+
+_SOURCE_ROOT: Path | None = _find_source_root()
+
+
+def _resolve_uv_bin() -> str:
+    """Return the absolute path to the uv binary.
+
+    Tries the venv sibling first (uv is often installed alongside python),
+    then falls back to PATH lookup.
+    """
+    import shutil
+
+    venv_uv = Path(sys.executable).parent / "uv"
+    if venv_uv.exists():
+        return str(venv_uv)
+    found = shutil.which("uv")
+    if found:
+        return found
+    return "uv"  # last resort: let the shell resolve it
 
 
 @dataclass
@@ -92,7 +128,7 @@ class ProcessManager:
         model: str | None = None,
         worktree: str | None = None,
         working_dir: str | None = None,
-        auto_approve: bool = True,
+        auto_approve: bool = False,
     ) -> AgentProcess:
         """Spawn an agent in TUI mode inside a new tmux session.
 
@@ -129,6 +165,27 @@ class ProcessManager:
         # Set up pipe-pane to capture all TUI output into stream.log
         self._setup_pipe_pane(session_name, stream_log)
 
+        # Export identity env vars so phalanx write-artifact knows who is running.
+        # tmux environment= kwarg is not exported to the shell — must be set explicitly.
+        export_cmd = (
+            f"export PHALANX_AGENT_ID={agent_id} "
+            f"PHALANX_TEAM_ID={team_id} "
+            f"PHALANX_ROOT={str(self._root)}"
+        )
+        pane = session.active_window.active_pane
+        pane.send_keys(export_cmd, enter=True)
+
+        # When running from a dev source checkout, shadow the installed phalanx
+        # binary with a shell function that calls `uv run --project <src> phalanx`.
+        # This ensures agents always use the current source, not a stale wheel.
+        if _SOURCE_ROOT is not None:
+            uv_bin = shlex.quote(_resolve_uv_bin())
+            src = shlex.quote(str(_SOURCE_ROOT))
+            alias_cmd = (
+                f'phalanx() {{ {uv_bin} run --project {src} phalanx "$@"; }}; export -f phalanx'
+            )
+            pane.send_keys(alias_cmd, enter=True)
+
         # Build the TUI command (no --print)
         cmd_parts = backend.build_start_command(
             prompt=prompt,
@@ -144,9 +201,6 @@ class ProcessManager:
                     cmd_parts.insert(1, flag)
 
         cmd_str = shlex.join(cmd_parts)
-
-        # Send the command into the pane
-        pane = session.active_window.active_pane
         pane.send_keys(cmd_str, enter=True)
 
         agent_proc = AgentProcess(
@@ -349,6 +403,33 @@ class ProcessManager:
     def get_process(self, agent_id: str) -> AgentProcess | None:
         return self._processes.get(agent_id)
 
+    def discover_agent(
+        self, team_id: str, agent_id: str, backend: AgentBackend | None = None
+    ) -> AgentProcess | None:
+        """Discover an existing agent tmux session and register it.
+
+        Used by the monitor daemon which starts fresh without spawned processes.
+        """
+        session_name = self._session_name(team_id, agent_id)
+        try:
+            session = self.server.sessions.get(session_name=session_name)
+        except Exception:
+            return None
+
+        agent_dir = self._root / "teams" / team_id / "agents" / agent_id
+        stream_log = agent_dir / "stream.log"
+
+        proc = AgentProcess(
+            agent_id=agent_id,
+            team_id=team_id,
+            session_name=session_name,
+            stream_log=stream_log,
+            backend=backend,
+            _session=session,
+        )
+        self._processes[agent_id] = proc
+        return proc
+
     def list_processes(self) -> dict[str, AgentProcess]:
         return dict(self._processes)
 
@@ -387,6 +468,8 @@ def _looks_like_prompt(text: str) -> bool:
     indicators = [
         "❯",  # Claude Code prompt
         "? for shortcuts",  # Claude Code help hint
+        "→ Add a follow-up",  # Cursor TUI idle prompt
+        "/ commands · @",  # Cursor TUI bottom bar (idle state)
         "> ",  # Generic prompt
         ">>>",  # Python-style prompt
         "$ ",  # Shell prompt (agent returned to shell)

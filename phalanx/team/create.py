@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 import logging
+import shlex
 import uuid
 from pathlib import Path
+
+import libtmux
 
 from phalanx.config import PhalanxConfig
 from phalanx.db import StateDB
 from phalanx.monitor.heartbeat import HeartbeatMonitor
 from phalanx.process.manager import ProcessManager
+from phalanx.team.config import TeamConfig, resolve_model
 from phalanx.team.spawn import spawn_agent
 
 logger = logging.getLogger(__name__)
@@ -30,6 +34,84 @@ def parse_agents_spec(spec: str) -> list[tuple[str, int]]:
     return agents
 
 
+def create_team_from_config(
+    phalanx_root: Path,
+    db: StateDB,
+    process_manager: ProcessManager,
+    heartbeat_monitor: HeartbeatMonitor,
+    team_config: TeamConfig,
+    backend_name: str = "cursor",
+    auto_approve: bool = False,
+    config: PhalanxConfig | None = None,
+) -> tuple[str, str, list[str]]:
+    """Create a team from a full config with per-agent prompts.
+
+    Returns (team_id, lead_agent_id, [worker_agent_ids]).
+    """
+    team_id = f"team-{uuid.uuid4().hex[:8]}"
+
+    team_config.generate_ids()
+
+    db.create_team(team_id, team_config.task, config=team_config.to_dict())
+
+    team_dir = phalanx_root / "teams" / team_id
+    team_dir.mkdir(parents=True, exist_ok=True)
+    team_config.save(team_dir / "config.json")
+
+    worker_ids = []
+    for agent_spec in team_config.agents:
+        model = agent_spec.resolve_model(backend_name)
+
+        spawn_agent(
+            phalanx_root=phalanx_root,
+            db=db,
+            process_manager=process_manager,
+            heartbeat_monitor=heartbeat_monitor,
+            team_id=team_id,
+            task=agent_spec.prompt,
+            role=agent_spec.role,
+            agent_id=agent_spec.agent_id,
+            backend_name=backend_name,
+            model=model,
+            auto_approve=auto_approve,
+            config=config,
+        )
+        worker_ids.append(agent_spec.agent_id)
+
+    lead_model = team_config.lead.resolve_model(backend_name)
+    lead_id = team_config.lead.agent_id
+
+    worker_list = "\n".join(
+        f"- {a.agent_id} (role={a.role}, name={a.name})" for a in team_config.agents
+    )
+    lead_task = f"Team task: {team_config.task}\n\nWorkers:\n{worker_list}\n\nTeam ID: {team_id}"
+
+    spawn_agent(
+        phalanx_root=phalanx_root,
+        db=db,
+        process_manager=process_manager,
+        heartbeat_monitor=heartbeat_monitor,
+        team_id=team_id,
+        task=lead_task,
+        role="lead",
+        agent_id=lead_id,
+        backend_name=backend_name,
+        model=lead_model,
+        auto_approve=auto_approve,
+        config=config,
+    )
+
+    _spawn_team_monitor(phalanx_root, team_id)
+
+    logger.info(
+        "Created team %s with lead %s and %d workers",
+        team_id,
+        lead_id,
+        len(worker_ids),
+    )
+    return team_id, lead_id, worker_ids
+
+
 def create_team(
     phalanx_root: Path,
     db: StateDB,
@@ -39,32 +121,30 @@ def create_team(
     agents_spec: str = "coder",
     backend_name: str = "cursor",
     model: str | None = None,
-    auto_approve: bool = True,
+    auto_approve: bool = False,
     config: PhalanxConfig | None = None,
 ) -> tuple[str, str]:
-    """Create a new team and spawn its team lead.
+    """Create a team using the simple --task + --agents spec.
 
-    Returns (team_id, lead_agent_id).
+    All workers get the same task. Returns (team_id, lead_agent_id).
     """
     team_id = f"team-{uuid.uuid4().hex[:8]}"
     lead_id = f"lead-{uuid.uuid4().hex[:8]}"
 
-    # Create team in DB
-    team_config = {}
+    team_config_data = {}
     if config:
-        team_config = config.to_dict()
-    db.create_team(team_id, task, config=team_config)
+        team_config_data = config.to_dict()
+    db.create_team(team_id, task, config=team_config_data)
 
-    # Create team directory
     team_dir = phalanx_root / "teams" / team_id
     team_dir.mkdir(parents=True, exist_ok=True)
 
-    # Spawn workers first
     worker_specs = parse_agents_spec(agents_spec)
     worker_index = 0
     for role, count in worker_specs:
         for _ in range(count):
-            worker_id = f"w{worker_index}-{role}"
+            worker_id = f"w{worker_index}-{role}-{uuid.uuid4().hex[:8]}"
+            resolved_model = resolve_model(backend_name, role, model)
             spawn_agent(
                 phalanx_root=phalanx_root,
                 db=db,
@@ -75,13 +155,13 @@ def create_team(
                 role=role,
                 agent_id=worker_id,
                 backend_name=backend_name,
-                model=None,  # let router decide based on role
+                model=resolved_model,
                 auto_approve=auto_approve,
                 config=config,
             )
             worker_index += 1
 
-    # Spawn team lead
+    lead_model = resolve_model(backend_name, "lead", model)
     spawn_agent(
         phalanx_root=phalanx_root,
         db=db,
@@ -92,10 +172,36 @@ def create_team(
         role="lead",
         agent_id=lead_id,
         backend_name=backend_name,
-        model=model,
+        model=lead_model,
         auto_approve=auto_approve,
         config=config,
     )
 
+    _spawn_team_monitor(phalanx_root, team_id)
+
     logger.info("Created team %s with lead %s", team_id, lead_id)
     return team_id, lead_id
+
+
+def _spawn_team_monitor(phalanx_root: Path, team_id: str) -> None:
+    """Spawn the team-monitor daemon in its own tmux session."""
+    import sys
+
+    session_name = f"phalanx-mon-{team_id}"
+    python = shlex.quote(sys.executable)
+    cmd = f"{python} -m phalanx.cli --root {shlex.quote(str(phalanx_root))} team-monitor {team_id}"
+
+    try:
+        server = libtmux.Server()
+        try:
+            existing = server.sessions.get(session_name=session_name)
+            existing.kill()
+        except Exception:
+            pass
+
+        session = server.new_session(session_name=session_name)
+        pane = session.active_window.active_pane
+        pane.send_keys(cmd, enter=True)
+        logger.info("Spawned team monitor in tmux session %s", session_name)
+    except Exception as e:
+        logger.warning("Failed to spawn team monitor for %s: %s", team_id, e)

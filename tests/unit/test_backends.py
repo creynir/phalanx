@@ -36,6 +36,7 @@ class TestCursorBackend:
     def test_interactive_basic(self):
         cmd = self.b.build_start_command("fix bug")
         assert cmd[0].endswith("agent")
+        # Non-path strings are passed inline (not as @file reference)
         assert "fix bug" in cmd
         assert "--trust" not in cmd
 
@@ -46,12 +47,23 @@ class TestCursorBackend:
         assert "--worktree" in cmd
         assert "feat-x" in cmd
 
-    def test_headless_basic(self):
-        cmd = self.b.build_start_command("fix tests")
-        assert "fix tests" in cmd
+    def test_prompt_uses_inline_content(self, tmp_path):
+        task_file = tmp_path / "task.md"
+        task_file.write_text("Do the thing now.")
+        cmd = self.b.build_start_command(str(task_file))
+        # File content is inlined, not passed as @file reference
+        assert "Do the thing now." in cmd
+        assert f"@{task_file}" not in cmd
 
-    def test_headless_no_json(self):
-        pass
+    def test_prompt_with_soul_file(self, tmp_path):
+        soul = tmp_path / "soul.md"
+        soul.write_text("instructions")
+        task_file = tmp_path / "task.md"
+        task_file.write_text("Do the thing now.")
+        # soul_file is now merged into task by spawn.py before build_start_command
+        # is called with soul_file=None, so this tests legacy path
+        cmd = self.b.build_start_command(str(task_file), soul_file=None)
+        assert "Do the thing now." in cmd
 
     def test_headless_manual_approve(self):
         cmd = self.b.build_start_command("task", auto_approve=False)
@@ -80,7 +92,7 @@ class TestClaudeBackend:
         cmd = self.b.build_start_command("refactor auth")
         assert cmd[0].endswith("claude")
         assert "--dangerously-skip-permissions" in cmd
-        assert "refactor auth" in cmd
+        assert "@refactor auth" in cmd
 
     def test_headless_with_model(self):
         cmd = self.b.build_start_command("task", model="opus")
@@ -106,7 +118,7 @@ class TestGeminiBackend:
         cmd = self.b.build_start_command("research topic")
         assert cmd[0].endswith("gemini")
         assert "--yolo" in cmd
-        assert "research topic" in cmd
+        assert "@research topic" in cmd
 
     def test_headless_with_policy(self, tmp_path):
         policy = tmp_path / "soul.md"
@@ -134,13 +146,13 @@ class TestCodexBackend:
         cmd = self.b.build_start_command("fix bug")
         assert cmd[0].endswith("codex")
         assert "--full-auto" in cmd
-        assert "fix bug" in cmd
+        assert "@fix bug" in cmd
 
     def test_headless_basic(self):
         cmd = self.b.build_start_command("write tests")
         assert cmd[0].endswith("codex")
         assert "--full-auto" in cmd
-        assert "write tests" in cmd
+        assert "@write tests" in cmd
 
     def test_resume(self):
         cmd = self.b.build_resume_command("whatever")

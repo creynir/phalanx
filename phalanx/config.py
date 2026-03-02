@@ -23,7 +23,7 @@ class PhalanxConfig:
     stall_check_interval: int = 20  # seconds
     max_retries: int = 3
     gc_after_hours: int = 24
-    auto_approve: bool = True
+    auto_approve: bool = False
     monitor_poll_interval: int = 20
 
     def to_dict(self) -> dict:

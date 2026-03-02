@@ -1,7 +1,7 @@
 """Agent spawning with soul file injection and environment setup.
 
 Handles both team-based spawning (from team lead) and single-agent mode
-(from `phalanx run-agent`). In both cases, agents run in TUI mode
+(from `phalanx create-team`). Agents always run in TUI mode
 inside tmux with pipe-pane log streaming.
 """
 
@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 import uuid
 from pathlib import Path
 
@@ -34,26 +35,27 @@ def spawn_agent(
     model: str | None = None,
     worktree: str | None = None,
     working_dir: str | None = None,
-    auto_approve: bool = True,
+    auto_approve: bool = False,
     config: PhalanxConfig | None = None,
 ) -> AgentProcess:
     """Spawn an agent in TUI mode with full setup.
 
     1. Generate agent ID
     2. Load and inject soul file
-    3. Create DB record
-    4. Spawn tmux session with pipe-pane
-    5. Register heartbeat monitor
+    3. Write task file for long prompts
+    4. Create DB record
+    5. Spawn tmux session with pipe-pane
+    6. Register heartbeat monitor
     """
     if agent_id is None:
         agent_id = f"{role}-{uuid.uuid4().hex[:8]}"
 
     backend = get_backend(backend_name)
 
-    # Load appropriate soul file
     soul_file = _resolve_soul_file(phalanx_root, role)
 
-    # Create DB record
+    task_file = _write_task_file(phalanx_root, team_id, agent_id, task, soul_file=soul_file)
+
     db.create_agent(
         agent_id=agent_id,
         team_id=team_id,
@@ -64,7 +66,6 @@ def spawn_agent(
         worktree=worktree,
     )
 
-    # Set environment variables for the agent
     env_vars = {
         "PHALANX_AGENT_ID": agent_id,
         "PHALANX_TEAM_ID": team_id,
@@ -73,25 +74,33 @@ def spawn_agent(
     for k, v in env_vars.items():
         os.environ[k] = v
 
-    # Spawn in tmux
     agent_proc = process_manager.spawn(
         team_id=team_id,
         agent_id=agent_id,
         backend=backend,
-        prompt=task,
-        soul_file=soul_file,
+        prompt=str(task_file),
+        soul_file=None,  # soul is already merged into task_file
         model=model,
         worktree=worktree,
         working_dir=working_dir,
         auto_approve=auto_approve,
     )
 
-    # Update DB with running state
     db.update_agent(agent_id, status="running", pid=os.getpid())
-    db.log_event(team_id, "spawn", agent_id=agent_id, payload={"task": task, "model": model})
+    db.log_event(team_id, "spawn", agent_id=agent_id, payload={"task": task[:200], "model": model})
 
-    # Register heartbeat
     heartbeat_monitor.register(agent_id, agent_proc.stream_log)
+
+    # Stagger spawns to avoid backend-specific filesystem races (e.g. Cursor
+    # agents racing to rewrite cli-config.json on startup).
+    delay = backend.spawn_delay()
+    if delay > 0:
+        logger.debug(
+            "Staggering next spawn by %.1fs (backend=%s)",
+            delay,
+            backend_name,
+        )
+        time.sleep(delay)
 
     logger.info(
         "Spawned agent %s (role=%s, backend=%s, model=%s) in team %s",
@@ -104,45 +113,41 @@ def spawn_agent(
     return agent_proc
 
 
-def spawn_single_agent(
+def _write_task_file(
     phalanx_root: Path,
-    db: StateDB,
-    process_manager: ProcessManager,
-    heartbeat_monitor: HeartbeatMonitor,
+    team_id: str,
+    agent_id: str,
     task: str,
-    backend_name: str = "cursor",
-    model: str | None = None,
-    auto_approve: bool = True,
-    config: PhalanxConfig | None = None,
-) -> tuple[str, str, AgentProcess]:
-    """Spawn a single agent without a team lead (run-agent mode).
+    soul_file: Path | None = None,
+) -> Path:
+    """Write a single merged prompt file combining soul + task.
 
-    Creates a synthetic team with a single worker. Returns
-    (team_id, agent_id, AgentProcess).
+    Merging into one file ensures the agent receives a single imperative
+    message rather than two @file references it will summarise and await
+    follow-up on. The soul preamble is prepended so the agent has its role
+    context before reading the task.
+
+    Substitutes:
+      {task} — the agent's assigned task text
     """
-    team_id = f"solo-{uuid.uuid4().hex[:8]}"
-    agent_id = f"agent-{uuid.uuid4().hex[:8]}"
+    agent_dir = phalanx_root / "teams" / team_id / "agents" / agent_id
+    agent_dir.mkdir(parents=True, exist_ok=True)
+    task_file = agent_dir / "task.md"
 
-    # Create a synthetic team
-    db.create_team(team_id, task, config={"mode": "single-agent"})
+    if soul_file and soul_file.exists():
+        soul_content = soul_file.read_text(encoding="utf-8")
+        if "{task}" in soul_content:
+            merged = soul_content.replace("{task}", task)
+        else:
+            merged = f"{soul_content}\n\n---\n\n{task}"
+        # Prepend a hard imperative so the very first token the agent sees is
+        # an action verb, not a document to read and summarise.
+        merged = f"Execute the following task immediately without summarising or asking questions:\n\n{merged}"
+    else:
+        merged = task
 
-    agent_proc = spawn_agent(
-        phalanx_root=phalanx_root,
-        db=db,
-        process_manager=process_manager,
-        heartbeat_monitor=heartbeat_monitor,
-        team_id=team_id,
-        task=task,
-        role="worker",
-        agent_id=agent_id,
-        backend_name=backend_name,
-        model=model,
-        auto_approve=auto_approve,
-        config=config,
-    )
-
-    logger.info("Single-agent mode: team=%s, agent=%s", team_id, agent_id)
-    return team_id, agent_id, agent_proc
+    task_file.write_text(merged, encoding="utf-8")
+    return task_file
 
 
 def _resolve_soul_file(phalanx_root: Path, role: str) -> Path | None:

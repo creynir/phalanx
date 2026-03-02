@@ -33,9 +33,9 @@ class GeminiBackend(AgentBackend):
         if model:
             cmd += ["--model", model]
         if soul_file:
-            cmd.append(f"@{soul_file} {prompt}")
+            cmd.append(f"@{soul_file} @{prompt}")
         else:
-            cmd.append(prompt)
+            cmd.append(f"@{prompt}")
         return cmd
 
     def build_resume_command(self, chat_id: str) -> list[str]:

@@ -21,11 +21,18 @@ from enum import Enum
 from phalanx.monitor.heartbeat import HeartbeatMonitor
 from phalanx.process.manager import ProcessManager
 
+# Avoid circular import — StateDB is only used for type hints here
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from phalanx.db import StateDB
+
 logger = logging.getLogger(__name__)
 
 IDLE_TIMEOUT_SECONDS = 1800  # 30 minutes
 SCREEN_CHECK_INTERVAL = 20  # seconds between screen scrapes
 MAX_RETRY_BACKOFF = 300  # max 5 minutes between retries
+IDLE_NUDGE_COOLDOWN = 60  # seconds between repeated agent_idle detections
 
 
 class AgentState(str, Enum):
@@ -128,8 +135,13 @@ def _check_error_prompt(lines: list[str]) -> bool:
 @_register_pattern("agent_idle")
 def _check_agent_idle(lines: list[str]) -> bool:
     """Detect if the agent has returned to its input prompt."""
-    tail = "\n".join(lines[-3:]) if lines else ""
-    return "❯" in tail or "? for shortcuts" in tail
+    tail = "\n".join(lines[-5:]) if lines else ""
+    return (
+        "❯" in tail  # Claude Code prompt
+        or "? for shortcuts" in tail  # Claude Code help hint
+        or "→ Add a follow-up" in tail  # Cursor TUI idle prompt
+        or "/ commands · @" in tail  # Cursor TUI bottom bar (idle state)
+    )
 
 
 class StallDetector:
@@ -146,14 +158,17 @@ class StallDetector:
         heartbeat_monitor: HeartbeatMonitor,
         idle_timeout: int = IDLE_TIMEOUT_SECONDS,
         check_interval: int = SCREEN_CHECK_INTERVAL,
+        db: "StateDB | None" = None,
     ) -> None:
         self._pm = process_manager
         self._hb = heartbeat_monitor
         self._idle_timeout = idle_timeout
         self._check_interval = check_interval
+        self._db = db
         self._retry_counts: dict[str, int] = {}
         self._blocked_agents: dict[str, PromptDetection] = {}
         self._last_screen_check: dict[str, float] = {}
+        self._last_idle_nudge: dict[str, float] = {}
 
     def check_agent(self, agent_id: str) -> StallEvent | None:
         """Check a single agent for stalls or prompts.
@@ -251,12 +266,43 @@ class StallDetector:
     def reset_retries(self, agent_id: str) -> None:
         self._retry_counts.pop(agent_id, None)
 
+    def _agent_has_artifact(self, agent_id: str) -> bool:
+        """Return True if the agent has already written an artifact."""
+        if self._db is None:
+            return False
+        try:
+            agent = self._db.get_agent(agent_id)
+            return agent is not None and agent.get("artifact_status") is not None
+        except Exception:
+            return False
+
     def _detect_prompt(self, agent_id: str, screen: list[str]) -> PromptDetection | None:
         """Run all registered prompt patterns against the screen."""
         for pattern_name, checker in _PROMPT_PATTERNS:
-            # Skip "agent_idle" — that's normal operating state, not a block
             if pattern_name == "agent_idle":
+                # Agent sitting at prompt is only a problem if it hasn't written
+                # its artifact yet — otherwise it finished normally.
+                if not self._agent_has_artifact(agent_id):
+                    now = time.time()
+                    last_nudge = self._last_idle_nudge.get(agent_id, 0)
+                    if (now - last_nudge) >= IDLE_NUDGE_COOLDOWN:
+                        try:
+                            if checker(screen):
+                                self._last_idle_nudge[agent_id] = now
+                                screen_text = "\n".join(screen)
+                                logger.info(
+                                    "Agent %s is idle at prompt without artifact — nudge needed",
+                                    agent_id,
+                                )
+                                return PromptDetection(
+                                    agent_id=agent_id,
+                                    prompt_type="agent_idle",
+                                    screen_text=screen_text,
+                                )
+                        except Exception as e:
+                            logger.debug("agent_idle check failed for %s: %s", agent_id, e)
                 continue
+
             try:
                 if checker(screen):
                     screen_text = "\n".join(screen)

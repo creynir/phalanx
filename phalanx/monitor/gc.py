@@ -16,6 +16,20 @@ logger = logging.getLogger(__name__)
 DEFAULT_GC_HOURS = 24
 
 
+def _kill_monitor_session(team_id: str) -> None:
+    """Kill the team monitor tmux session if it exists."""
+    try:
+        import libtmux
+
+        server = libtmux.Server()
+        session_name = f"phalanx-mon-{team_id}"
+        session = server.sessions.get(session_name=session_name)
+        session.kill()
+        logger.info("GC: killed monitor session %s", session_name)
+    except Exception:
+        pass
+
+
 def run_gc(
     phalanx_root: Path,
     db=None,
@@ -38,6 +52,8 @@ def run_gc(
         return []
 
     for team_id in dead_teams:
+        _kill_monitor_session(team_id)
+
         team_dir = phalanx_root / "teams" / team_id
         if team_dir.exists():
             shutil.rmtree(team_dir, ignore_errors=True)

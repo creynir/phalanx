@@ -33,12 +33,13 @@ class CursorBackend(AgentBackend):
             cmd += ["--model", model]
         if worktree:
             cmd += ["--worktree", worktree]
-        # In TUI mode, --trust and --force cannot be used. We must handle the trust prompt via our scraper/escalation.
-        if soul_file:
-            # We don't prepend @ because we aren't using the file as the *entire* prompt,
-            # but we can try to feed it through if that's what's supported.
-            # Actually, `agent` CLI supports `@file task` where it loads the file and appends the rest of the prompt
-            cmd += [f"@{soul_file}", prompt]
+        # Pass task content inline rather than as @file reference.
+        # @file syntax causes Cursor TUI to treat the content as a document
+        # to read and summarise rather than as a command to execute.
+        prompt_path = Path(prompt)
+        if prompt_path.exists():
+            task_content = prompt_path.read_text(encoding="utf-8")
+            cmd.append(task_content)
         else:
             cmd.append(prompt)
         return cmd
@@ -70,3 +71,15 @@ class CursorBackend(AgentBackend):
 
     def auto_approve_flags(self) -> list[str]:
         return ["--yolo"]
+
+    def spawn_delay(self) -> float:
+        # Cursor agent processes share ~/.cursor/cli-config.json and race to
+        # rewrite it on startup. A 3-second stagger between spawns is enough
+        # for each process to finish its config init before the next starts.
+        # Set PHALANX_CURSOR_SPAWN_DELAY=0 to disable (e.g. in tests).
+        import os
+
+        env_val = os.environ.get("PHALANX_CURSOR_SPAWN_DELAY")
+        if env_val is not None:
+            return float(env_val)
+        return 3.0

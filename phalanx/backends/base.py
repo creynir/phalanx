@@ -59,3 +59,12 @@ class AgentBackend(ABC):
     def auto_approve_flags(self) -> list[str]:
         """Flags to enable auto-approval of tool calls, if any."""
         return []
+
+    def spawn_delay(self) -> float:
+        """Seconds to wait after spawning an agent before spawning the next.
+
+        Used to avoid filesystem races in backends that share config files
+        between concurrent instances (e.g. Cursor cli-config.json).
+        Default is 0 (no delay). Backends that need staggering override this.
+        """
+        return 0.0

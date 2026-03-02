@@ -1,51 +1,70 @@
 """Message delivery to agents via tmux send-keys.
 
-For TUI-mode agents, messages are delivered by typing into the tmux pane.
-If the agent is busy (generating), it's first interrupted with Ctrl+C.
-Long messages are written to a file and the file path is sent instead.
+Push-only delivery: messages are sent immediately via send-keys.
+The terminal input buffer queues them until the agent's next input read.
+No Ctrl+C interrupt — the agent picks up the message naturally.
+
+Long messages (>500 chars) are written to a temp file and the agent
+is told to read that file instead.
 """
 
 from __future__ import annotations
 
 import logging
-import tempfile
 from pathlib import Path
 
 from phalanx.process.manager import ProcessManager
 
 logger = logging.getLogger(__name__)
 
-LONG_MESSAGE_THRESHOLD = 500  # chars — beyond this, use file-based delivery
+LONG_MESSAGE_THRESHOLD = 500
 
 
 def deliver_message(
     process_manager: ProcessManager,
     agent_id: str,
     message: str,
-    interrupt_if_busy: bool = True,
     message_dir: Path | None = None,
 ) -> bool:
-    """Deliver a message to an agent's tmux pane."""
-    proc = process_manager.get_process(agent_id)
-    if proc is not None and not proc.is_alive():
-        logger.warning("Cannot deliver message: agent %s is dead", agent_id)
-        return False
+    """Deliver a message to an agent's tmux pane via send-keys.
 
-    # Interrupt if busy
-    if interrupt_if_busy:
-        prompt_returned = process_manager.interrupt_agent(agent_id)
-        if not prompt_returned:
-            logger.warning(
-                "Agent %s did not return to prompt after interrupt; message delivery may fail",
-                agent_id,
-            )
+    The message is formatted with delimiter for multi-message separation.
+    Terminal input buffer handles queuing — no interrupt needed.
+    """
+    formatted = f'- "{message}";'
 
-    # Long messages: write to file
-    if len(message) > LONG_MESSAGE_THRESHOLD:
-        return _deliver_via_file(process_manager, agent_id, message, message_dir)
+    if len(formatted) > LONG_MESSAGE_THRESHOLD:
+        return _deliver_via_file(process_manager, agent_id, formatted, message_dir)
 
-    # Short messages: send directly
-    return process_manager.send_keys(agent_id, message, enter=True)
+    return process_manager.send_keys(agent_id, formatted, enter=True)
+
+
+def broadcast_message(
+    process_manager: ProcessManager,
+    db,
+    team_id: str,
+    message: str,
+    exclude_agent_id: str | None = None,
+    message_dir: Path | None = None,
+) -> dict[str, bool]:
+    """Deliver a message to all agents in a team.
+
+    Returns {agent_id: success} for each delivery attempt.
+    """
+    agents = db.list_agents(team_id)
+    results = {}
+
+    for agent in agents:
+        agent_id = agent["id"]
+        if agent_id == exclude_agent_id:
+            continue
+        if agent["status"] != "running":
+            results[agent_id] = False
+            continue
+
+        results[agent_id] = deliver_message(process_manager, agent_id, message, message_dir)
+
+    return results
 
 
 def _deliver_via_file(
@@ -54,13 +73,15 @@ def _deliver_via_file(
     message: str,
     message_dir: Path | None = None,
 ) -> bool:
-    """Write message to a temp file and send the path to the agent."""
+    """Write message to a file and tell the agent to read it."""
     if message_dir is None:
+        import tempfile
+
         message_dir = Path(tempfile.gettempdir()) / "phalanx_messages"
     message_dir.mkdir(parents=True, exist_ok=True)
 
     msg_file = message_dir / f"msg_{agent_id}_{hash(message) & 0xFFFFFFFF:08x}.txt"
     msg_file.write_text(message, encoding="utf-8")
 
-    delivery_text = f"Read the message at: {msg_file}"
+    delivery_text = f'- "Read the message at: {msg_file}";'
     return process_manager.send_keys(agent_id, delivery_text, enter=True)

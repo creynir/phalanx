@@ -13,7 +13,7 @@ import time
 from contextlib import contextmanager
 from pathlib import Path
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS teams (
@@ -48,14 +48,12 @@ CREATE TABLE IF NOT EXISTS agents (
     prompt_screen   TEXT
 );
 
-CREATE TABLE IF NOT EXISTS messages (
+CREATE TABLE IF NOT EXISTS feed (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     team_id     TEXT NOT NULL REFERENCES teams(id),
-    agent_id    TEXT,
-    sender      TEXT NOT NULL,
+    sender_id   TEXT NOT NULL,
     content     TEXT NOT NULL,
-    created_at  REAL NOT NULL,
-    delivered   INTEGER DEFAULT 0
+    created_at  REAL NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS file_locks (
@@ -103,13 +101,61 @@ class StateDB:
 
     def _init_db(self) -> None:
         with self._connect() as conn:
+            existing_tables = {
+                r[0]
+                for r in conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                ).fetchall()
+            }
+
+            if "schema_version" in existing_tables:
+                row = conn.execute("SELECT version FROM schema_version LIMIT 1").fetchone()
+                if row and row["version"] < SCHEMA_VERSION:
+                    self._migrate(conn, row["version"])
+
             conn.executescript(_SCHEMA)
+
             row = conn.execute("SELECT version FROM schema_version LIMIT 1").fetchone()
             if row is None:
                 conn.execute(
                     "INSERT INTO schema_version (version) VALUES (?)",
                     (SCHEMA_VERSION,),
                 )
+
+    def _migrate(self, conn: sqlite3.Connection, from_version: int) -> None:
+        """Run incremental migrations from from_version to SCHEMA_VERSION."""
+        if from_version < 3:
+            tables = {
+                r[0]
+                for r in conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                ).fetchall()
+            }
+            if "messages" in tables and "feed" not in tables:
+                conn.execute(
+                    "CREATE TABLE feed ("
+                    "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                    "team_id TEXT NOT NULL REFERENCES teams(id), "
+                    "sender_id TEXT NOT NULL, "
+                    "content TEXT NOT NULL, "
+                    "created_at REAL NOT NULL)"
+                )
+                conn.execute(
+                    "INSERT INTO feed (team_id, sender_id, content, created_at) "
+                    "SELECT team_id, sender, content, created_at FROM messages"
+                )
+                conn.execute("DROP TABLE messages")
+            elif "feed" not in tables:
+                conn.execute(
+                    "CREATE TABLE IF NOT EXISTS feed ("
+                    "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                    "team_id TEXT NOT NULL REFERENCES teams(id), "
+                    "sender_id TEXT NOT NULL, "
+                    "content TEXT NOT NULL, "
+                    "created_at REAL NOT NULL)"
+                )
+
+        conn.execute("UPDATE schema_version SET version = ?", (SCHEMA_VERSION,))
 
     @contextmanager
     def transaction(self):
@@ -162,7 +208,7 @@ class StateDB:
     def delete_team(self, team_id: str) -> None:
         with self.transaction() as conn:
             conn.execute("DELETE FROM events WHERE team_id = ?", (team_id,))
-            conn.execute("DELETE FROM messages WHERE team_id = ?", (team_id,))
+            conn.execute("DELETE FROM feed WHERE team_id = ?", (team_id,))
             conn.execute("DELETE FROM file_locks WHERE team_id = ?", (team_id,))
             conn.execute("DELETE FROM agents WHERE team_id = ?", (team_id,))
             conn.execute("DELETE FROM teams WHERE id = ?", (team_id,))
@@ -222,34 +268,31 @@ class StateDB:
                 (time.time(), time.time(), agent_id),
             )
 
-    # -- Messages --
+    # -- Feed (shared team chat) --
 
-    def send_message(
-        self, team_id: str, sender: str, content: str, agent_id: str | None = None
-    ) -> int:
+    def post_to_feed(self, team_id: str, sender_id: str, content: str) -> int:
         now = time.time()
         with self.transaction() as conn:
             cursor = conn.execute(
-                "INSERT INTO messages (team_id, agent_id, sender, content, created_at) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (team_id, agent_id, sender, content, now),
+                "INSERT INTO feed (team_id, sender_id, content, created_at) VALUES (?, ?, ?, ?)",
+                (team_id, sender_id, content, now),
             )
             return cursor.lastrowid
 
-    def get_pending_messages(self, agent_id: str) -> list[dict]:
+    def get_feed(self, team_id: str, limit: int = 50, since: float | None = None) -> list[dict]:
         with self._connect() as conn:
-            rows = conn.execute(
-                "SELECT * FROM messages WHERE agent_id = ? AND delivered = 0 ORDER BY created_at",
-                (agent_id,),
-            ).fetchall()
-            return [dict(r) for r in rows]
-
-    def mark_delivered(self, message_id: int) -> None:
-        with self.transaction() as conn:
-            conn.execute(
-                "UPDATE messages SET delivered = 1 WHERE id = ?",
-                (message_id,),
-            )
+            if since:
+                rows = conn.execute(
+                    "SELECT * FROM feed WHERE team_id = ? AND created_at > ? "
+                    "ORDER BY created_at DESC LIMIT ?",
+                    (team_id, since, limit),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT * FROM feed WHERE team_id = ? ORDER BY created_at DESC LIMIT ?",
+                    (team_id, limit),
+                ).fetchall()
+            return [dict(r) for r in reversed(rows)]
 
     # -- Events --
 

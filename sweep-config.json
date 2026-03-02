@@ -1,0 +1,25 @@
+{
+  "task": "Audit the phalanx multi-agent orchestration codebase from your assigned lens and write a structured findings artifact.",
+  "agents": [
+    {
+      "role": "researcher",
+      "name": "reliability-auditor",
+      "prompt": "You are a reliability engineer auditing the phalanx codebase (current working directory). Your lens: error handling, retry logic, race conditions, crash paths, unchecked return values.\n\nSteps:\n1. Read phalanx/process/manager.py, phalanx/monitor/stall.py, phalanx/monitor/team_monitor.py, phalanx/monitor/heartbeat.py, phalanx/team/spawn.py, phalanx/team/create.py\n2. Identify specific reliability issues with file and approximate line references\n3. Write your artifact immediately after completing your analysis\n\nWrite artifact with: phalanx write-artifact --status done --output '{\"lens\":\"reliability\",\"findings\":[{\"file\":\"...\",\"issue\":\"...\",\"severity\":\"critical|high|medium|low\",\"recommendation\":\"...\"}]}'"
+    },
+    {
+      "role": "researcher",
+      "name": "security-auditor",
+      "prompt": "You are a security engineer auditing the phalanx codebase (current working directory). Your lens: shell injection via tmux send-keys, secret leakage in logs, trust boundaries between agents, arbitrary code execution surface.\n\nSteps:\n1. Read phalanx/process/manager.py, phalanx/cli.py, phalanx/comms/, phalanx/backends/cursor.py, phalanx/soul/worker.md, phalanx/soul/team_lead.md\n2. Identify specific security issues with file and approximate line references\n3. Write your artifact immediately after completing your analysis\n\nWrite artifact with: phalanx write-artifact --status done --output '{\"lens\":\"security\",\"findings\":[{\"file\":\"...\",\"issue\":\"...\",\"severity\":\"critical|high|medium|low\",\"recommendation\":\"...\"}]}'"
+    },
+    {
+      "role": "researcher",
+      "name": "architecture-auditor",
+      "prompt": "You are a software architect auditing the phalanx codebase (current working directory). Your lens: coupling between modules, abstraction leaks, extensibility pain points, things that will break when adding a new backend or scaling to 10+ agents.\n\nSteps:\n1. Read phalanx/backends/base.py, phalanx/backends/cursor.py, phalanx/backends/registry.py, phalanx/cli.py, phalanx/team/create.py, phalanx/team/spawn.py, phalanx/db.py, phalanx/config.py\n2. Identify specific architecture issues with file and approximate line references\n3. Write your artifact immediately after completing your analysis\n\nWrite artifact with: phalanx write-artifact --status done --output '{\"lens\":\"architecture\",\"findings\":[{\"file\":\"...\",\"issue\":\"...\",\"severity\":\"critical|high|medium|low\",\"recommendation\":\"...\"}]}'"
+    },
+    {
+      "role": "researcher",
+      "name": "observability-auditor",
+      "prompt": "You are an SRE auditing the phalanx codebase (current working directory). Your lens: what is invisible when something goes wrong — missing logs, no metrics, untracked state transitions, hard-to-debug failure modes, silent failures.\n\nSteps:\n1. Read phalanx/monitor/stall.py, phalanx/monitor/team_monitor.py, phalanx/monitor/heartbeat.py, phalanx/db.py, phalanx/cli.py, phalanx/process/manager.py\n2. Identify specific observability gaps with file and approximate line references\n3. Write your artifact immediately after completing your analysis\n\nWrite artifact with: phalanx write-artifact --status done --output '{\"lens\":\"observability\",\"findings\":[{\"file\":\"...\",\"issue\":\"...\",\"severity\":\"critical|high|medium|low\",\"recommendation\":\"...\"}]}'"
+    }
+  ]
+}

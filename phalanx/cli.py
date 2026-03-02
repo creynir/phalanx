@@ -1,17 +1,20 @@
 """Phalanx CLI — entry point for multi-agent orchestration.
 
 Subcommands:
-  run-agent     Single-agent mode (no team lead needed)
-  create-team   Create a team with a team lead
-  spawn-agent   Spawn a sub-agent (used by team lead)
-  monitor       Blocking DEM-style monitor loop
+  create-team   Create a team (--config for per-agent prompts)
+  team-monitor  Per-team monitoring daemon (auto-spawned)
+  monitor       Blocking DEM-style monitor loop for single agent
   team-status   Show team status
   agent-status  Show agent status
   team-result   Read team lead's artifact
   agent-result  Read agent's artifact
   message       Send message to team lead
   message-agent Send message to specific agent
+  broadcast     Send message to all agents in a team
+  post          Post to team feed
+  feed          Read team feed
   send-keys     Send raw keystrokes to an agent
+  resume        Resume a stopped/dead team
   stop          Stop a team
   stop-agent    Stop a specific agent
   write-artifact Write structured artifact
@@ -70,13 +73,17 @@ def _json_output(data: dict) -> None:
     help="Path to .phalanx directory",
 )
 @click.option("--json-output", "json_mode", is_flag=True, help="JSON output mode")
+@click.option(
+    "--auto-approve", is_flag=True, default=False, help="Enable auto-approve for all spawned agents"
+)
 @click.option("--verbose", "-v", is_flag=True, help="Verbose logging")
 @click.pass_context
-def cli(ctx, root, json_mode, verbose):
+def cli(ctx, root, json_mode, auto_approve, verbose):
     """Phalanx — Multi-Agent Orchestration System."""
     ctx.ensure_object(dict)
     ctx.obj["root"] = root
     ctx.obj["json_mode"] = json_mode
+    ctx.obj["auto_approve"] = auto_approve
 
     level = logging.DEBUG if verbose else logging.INFO
     logging.basicConfig(
@@ -89,189 +96,89 @@ def cli(ctx, root, json_mode, verbose):
         click.echo(ctx.get_help())
 
 
-# ── run-agent: Single-agent mode ─────────────────────────────────────
-
-
-@cli.command("run-agent")
-@click.argument("task")
-@click.option("--backend", "-b", default=None, help="Backend (cursor, claude, gemini, codex)")
-@click.option("--model", "-m", default=None, help="Model to use")
-@click.option("--auto-approve/--no-auto-approve", default=True, help="Auto-approve tool calls")
-@click.pass_context
-def run_agent(ctx, task, backend, model, auto_approve):
-    """Spawn and manage a single agent (no team lead).
-
-    This is the simplest way to run a single sub-agent, identical in
-    capability to a team worker but orchestrated directly by the user
-    or Main Agent.
-    """
-    from phalanx.monitor.heartbeat import HeartbeatMonitor
-    from phalanx.monitor.lifecycle import run_monitor_loop
-    from phalanx.monitor.stall import StallDetector
-    from phalanx.process.manager import ProcessManager
-    from phalanx.team.spawn import spawn_single_agent
-
-    root = _get_root(ctx)
-    config = _get_config(root)
-    db = _get_db(root)
-
-    backend_name = backend or config.default_backend
-    model_name = model or config.default_model
-
-    pm = ProcessManager(root)
-    hb = HeartbeatMonitor(idle_timeout=config.idle_timeout_seconds)
-    sd = StallDetector(pm, hb, idle_timeout=config.idle_timeout_seconds)
-
-    team_id, agent_id, agent_proc = spawn_single_agent(
-        phalanx_root=root,
-        db=db,
-        process_manager=pm,
-        heartbeat_monitor=hb,
-        task=task,
-        backend_name=backend_name,
-        model=model_name,
-        auto_approve=auto_approve,
-        config=config,
-    )
-
-    result_data = {
-        "ok": True,
-        "team_id": team_id,
-        "agent_id": agent_id,
-        "session": agent_proc.session_name,
-        "stream_log": str(agent_proc.stream_log),
-    }
-
-    if ctx.obj.get("json_mode"):
-        _json_output(result_data)
-    else:
-        click.echo(f"Agent spawned: {agent_id}")
-        click.echo(f"  Team:    {team_id}")
-        click.echo(f"  Session: {agent_proc.session_name}")
-        click.echo(f"  Log:     {agent_proc.stream_log}")
-        click.echo(f"  Attach:  tmux attach -t {agent_proc.session_name}")
-
-    # Start monitoring loop
-    click.echo("\nMonitoring agent... (Ctrl+C to detach)")
-    try:
-        mon_result = run_monitor_loop(
-            agent_id=agent_id,
-            process_manager=pm,
-            heartbeat_monitor=hb,
-            stall_detector=sd,
-            max_retries=config.max_retries,
-            max_runtime=config.max_runtime_seconds,
-            poll_interval=config.monitor_poll_interval,
-        )
-
-        if ctx.obj.get("json_mode"):
-            _json_output(mon_result.to_dict())
-        else:
-            click.echo(f"\nAgent {agent_id} finished: {mon_result.final_state}")
-            if mon_result.screen_text:
-                click.echo(f"  Screen: {mon_result.screen_text[:200]}")
-    except KeyboardInterrupt:
-        click.echo(f"\nDetached from agent {agent_id}.")
-        click.echo(f"  Re-attach: tmux attach -t {agent_proc.session_name}")
-        click.echo(f"  Monitor:   phalanx monitor {agent_id}")
-
-
 # ── create-team ──────────────────────────────────────────────────────
 
 
 @cli.command("create-team")
-@click.argument("task")
+@click.argument("task", required=False, default=None)
+@click.option(
+    "--config",
+    "config_path",
+    default=None,
+    type=click.Path(exists=True),
+    help="JSON config file with per-agent prompts",
+)
 @click.option("--agents", "-a", default="coder", help="Agent spec: role[:count],...")
 @click.option("--backend", "-b", default=None, help="Backend")
 @click.option("--model", "-m", default=None, help="Model")
-@click.option("--auto-approve/--no-auto-approve", default=True)
 @click.pass_context
-def create_team_cmd(ctx, task, agents, backend, model, auto_approve):
-    """Create a team and start its team lead."""
+def create_team_cmd(ctx, task, config_path, agents, backend, model):
+    """Create a team with per-agent prompts (--config) or simple shared task."""
     from phalanx.monitor.heartbeat import HeartbeatMonitor
     from phalanx.process.manager import ProcessManager
-    from phalanx.team.create import create_team
 
     root = _get_root(ctx)
-    config = _get_config(root)
+    phalanx_config = _get_config(root)
     db = _get_db(root)
+    backend_name = backend or phalanx_config.default_backend
+    auto_approve = ctx.obj.get("auto_approve", False)
 
     pm = ProcessManager(root)
-    hb = HeartbeatMonitor(idle_timeout=config.idle_timeout_seconds)
+    hb = HeartbeatMonitor(idle_timeout=phalanx_config.idle_timeout_seconds)
 
-    team_id, lead_id = create_team(
-        phalanx_root=root,
-        db=db,
-        process_manager=pm,
-        heartbeat_monitor=hb,
-        task=task,
-        agents_spec=agents,
-        backend_name=backend or config.default_backend,
-        model=model or config.default_model,
-        auto_approve=auto_approve,
-        config=config,
-    )
+    if config_path:
+        from phalanx.team.config import load_team_config
+        from phalanx.team.create import create_team_from_config
 
-    result = {"ok": True, "team_id": team_id, "lead_id": lead_id}
+        team_config = load_team_config(Path(config_path))
+        team_id, lead_id, worker_ids = create_team_from_config(
+            phalanx_root=root,
+            db=db,
+            process_manager=pm,
+            heartbeat_monitor=hb,
+            team_config=team_config,
+            backend_name=backend_name,
+            auto_approve=auto_approve,
+            config=phalanx_config,
+        )
+        result = {
+            "ok": True,
+            "team_id": team_id,
+            "lead_id": lead_id,
+            "worker_ids": worker_ids,
+        }
+    else:
+        if not task:
+            click.echo("Error: TASK argument is required when --config is not provided", err=True)
+            raise SystemExit(1)
+
+        from phalanx.team.create import create_team
+
+        team_id, lead_id = create_team(
+            phalanx_root=root,
+            db=db,
+            process_manager=pm,
+            heartbeat_monitor=hb,
+            task=task,
+            agents_spec=agents,
+            backend_name=backend_name,
+            model=model or phalanx_config.default_model,
+            auto_approve=auto_approve,
+            config=phalanx_config,
+        )
+        result = {"ok": True, "team_id": team_id, "lead_id": lead_id}
+
     if ctx.obj.get("json_mode"):
         _json_output(result)
     else:
-        click.echo(f"Team created: {team_id}")
-        click.echo(f"  Lead: {lead_id}")
+        click.echo(f"Team created: {result['team_id']}")
+        click.echo(f"  Lead: {result['lead_id']}")
+        if "worker_ids" in result:
+            for wid in result["worker_ids"]:
+                click.echo(f"  Worker: {wid}")
 
 
-# ── spawn-agent (used by team lead) ─────────────────────────────────
-
-
-@cli.command("spawn-agent")
-@click.argument("task")
-@click.option("--team-id", envvar="PHALANX_TEAM_ID", required=True)
-@click.option("--backend", "-b", default=None)
-@click.option("--model", "-m", default=None)
-@click.option("--worktree", default=None)
-@click.option("--auto-approve/--no-auto-approve", default=True)
-@click.pass_context
-def spawn_agent_cmd(ctx, task, team_id, backend, model, worktree, auto_approve):
-    """Spawn a sub-agent in an existing team."""
-    from phalanx.monitor.heartbeat import HeartbeatMonitor
-    from phalanx.process.manager import ProcessManager
-    from phalanx.team.spawn import spawn_agent
-
-    root = _get_root(ctx)
-    config = _get_config(root)
-    db = _get_db(root)
-
-    pm = ProcessManager(root)
-    hb = HeartbeatMonitor(idle_timeout=config.idle_timeout_seconds)
-
-    agent_proc = spawn_agent(
-        phalanx_root=root,
-        db=db,
-        process_manager=pm,
-        heartbeat_monitor=hb,
-        team_id=team_id,
-        task=task,
-        backend_name=backend or config.default_backend,
-        model=model or config.default_model,
-        worktree=worktree,
-        auto_approve=auto_approve,
-        config=config,
-    )
-
-    result = {
-        "ok": True,
-        "agent_id": agent_proc.agent_id,
-        "team_id": team_id,
-        "session": agent_proc.session_name,
-    }
-    if ctx.obj.get("json_mode"):
-        _json_output(result)
-    else:
-        click.echo(f"Agent spawned: {agent_proc.agent_id}")
-        click.echo(f"  Session: {agent_proc.session_name}")
-
-
-# ── monitor ──────────────────────────────────────────────────────────
+# ── monitor / team-monitor ───────────────────────────────────────────
 
 
 @cli.command("monitor")
@@ -300,7 +207,7 @@ def monitor_cmd(ctx, agent_id, team_id):
     pm = ProcessManager(root)
     hb = HeartbeatMonitor(idle_timeout=config.idle_timeout_seconds)
     hb.register(agent_id, stream_log)
-    sd = StallDetector(pm, hb, idle_timeout=config.idle_timeout_seconds)
+    sd = StallDetector(pm, hb, idle_timeout=config.idle_timeout_seconds, db=db)
 
     click.echo(f"Monitoring agent {agent_id}...")
     result = run_monitor_loop(
@@ -317,6 +224,49 @@ def monitor_cmd(ctx, agent_id, team_id):
         _json_output(result.to_dict())
     else:
         click.echo(json.dumps(result.to_dict(), indent=2))
+
+
+@cli.command("team-monitor")
+@click.argument("team_id")
+@click.pass_context
+def team_monitor_cmd(ctx, team_id):
+    """Per-team monitoring daemon. Auto-spawned by create-team in tmux."""
+    from phalanx.monitor.heartbeat import HeartbeatMonitor
+    from phalanx.monitor.stall import StallDetector
+    from phalanx.monitor.team_monitor import run_team_monitor
+    from phalanx.process.manager import ProcessManager
+
+    root = _get_root(ctx)
+    config = _get_config(root)
+    db = _get_db(root)
+
+    team = db.get_team(team_id)
+    if team is None:
+        click.echo(f"Error: Team '{team_id}' not found", err=True)
+        raise SystemExit(1)
+
+    pm = ProcessManager(root)
+    hb = HeartbeatMonitor(idle_timeout=config.idle_timeout_seconds)
+
+    agents = db.list_agents(team_id)
+    for agent in agents:
+        stream_log = root / "teams" / team_id / "agents" / agent["id"] / "stream.log"
+        if stream_log.exists() or stream_log.parent.exists():
+            hb.register(agent["id"], stream_log)
+        pm.discover_agent(team_id, agent["id"])
+
+    sd = StallDetector(pm, hb, idle_timeout=config.idle_timeout_seconds, db=db)
+
+    click.echo(f"Team monitor started for {team_id} ({len(agents)} agents)")
+    run_team_monitor(
+        team_id=team_id,
+        db=db,
+        process_manager=pm,
+        heartbeat_monitor=hb,
+        stall_detector=sd,
+        poll_interval=config.monitor_poll_interval,
+        idle_timeout=config.idle_timeout_seconds,
+    )
 
 
 # ── team-status / agent-status ──────────────────────────────────────
@@ -404,7 +354,7 @@ def agent_result_cmd(ctx, agent_id, team_id):
     _json_output(result)
 
 
-# ── message / message-agent ─────────────────────────────────────────
+# ── message / message-agent / broadcast ─────────────────────────────
 
 
 @cli.command("message")
@@ -412,24 +362,23 @@ def agent_result_cmd(ctx, agent_id, team_id):
 @click.argument("text")
 @click.pass_context
 def message_cmd(ctx, team_id, text):
-    """Send message to team lead (resumes if dead)."""
+    """Send message to team lead via send-keys."""
+    from phalanx.comms.messaging import deliver_message
+    from phalanx.process.manager import ProcessManager
+
     root = _get_root(ctx)
     db = _get_db(root)
 
-    db.send_message(team_id, sender="main", content=text)
-
-    # Find the team lead
     agents = db.list_agents(team_id)
     lead = next((a for a in agents if a["role"] == "lead"), None)
-    if lead and lead["status"] == "running":
-        from phalanx.comms.messaging import deliver_message
-        from phalanx.process.manager import ProcessManager
+    delivered = False
 
+    if lead and lead["status"] == "running":
         pm = ProcessManager(root)
-        deliver_message(pm, lead["id"], text)
+        delivered = deliver_message(pm, lead["id"], text)
 
     if ctx.obj.get("json_mode"):
-        _json_output({"ok": True, "team_id": team_id, "delivered": True})
+        _json_output({"ok": True, "team_id": team_id, "delivered": delivered})
     else:
         click.echo(f"Message sent to team {team_id}")
 
@@ -437,10 +386,12 @@ def message_cmd(ctx, team_id, text):
 @cli.command("message-agent")
 @click.argument("agent_id")
 @click.argument("text")
-@click.option("--team-id", envvar="PHALANX_TEAM_ID", default=None)
 @click.pass_context
-def message_agent_cmd(ctx, agent_id, text, team_id):
-    """Send message to a specific agent."""
+def message_agent_cmd(ctx, agent_id, text):
+    """Send message to a specific agent via send-keys."""
+    from phalanx.comms.messaging import deliver_message
+    from phalanx.process.manager import ProcessManager
+
     root = _get_root(ctx)
     db = _get_db(root)
 
@@ -449,20 +400,89 @@ def message_agent_cmd(ctx, agent_id, text, team_id):
         click.echo(f"Agent '{agent_id}' not found", err=True)
         raise SystemExit(1)
 
-    resolved_team = team_id or agent["team_id"]
-    db.send_message(resolved_team, sender="lead", content=text, agent_id=agent_id)
-
+    delivered = False
     if agent["status"] == "running":
-        from phalanx.comms.messaging import deliver_message
-        from phalanx.process.manager import ProcessManager
-
         pm = ProcessManager(root)
-        deliver_message(pm, agent_id, text)
+        delivered = deliver_message(pm, agent_id, text)
 
     if ctx.obj.get("json_mode"):
-        _json_output({"ok": True, "agent_id": agent_id, "delivered": True})
+        _json_output({"ok": True, "agent_id": agent_id, "delivered": delivered})
     else:
         click.echo(f"Message sent to agent {agent_id}")
+
+
+@cli.command("broadcast")
+@click.argument("team_id")
+@click.argument("text")
+@click.pass_context
+def broadcast_cmd(ctx, team_id, text):
+    """Broadcast a message to all agents in a team via send-keys."""
+    from phalanx.comms.messaging import broadcast_message
+    from phalanx.process.manager import ProcessManager
+
+    root = _get_root(ctx)
+    db = _get_db(root)
+    pm = ProcessManager(root)
+
+    results = broadcast_message(pm, db, team_id, text)
+
+    if ctx.obj.get("json_mode"):
+        _json_output({"ok": True, "team_id": team_id, "results": results})
+    else:
+        delivered = sum(1 for v in results.values() if v)
+        click.echo(f"Broadcast to team {team_id}: {delivered}/{len(results)} delivered")
+
+
+# ── post / feed (team communication) ─────────────────────────────────
+
+
+@cli.command("post")
+@click.argument("text")
+@click.option("--team-id", envvar="PHALANX_TEAM_ID", required=True)
+@click.pass_context
+def post_cmd(ctx, text, team_id):
+    """Post a message to the team feed (used by agents)."""
+    root = _get_root(ctx)
+    db = _get_db(root)
+
+    sender_id = os.environ.get("PHALANX_AGENT_ID", "external")
+    msg_id = db.post_to_feed(team_id, sender_id, text)
+
+    if ctx.obj.get("json_mode"):
+        _json_output({"ok": True, "message_id": msg_id, "team_id": team_id})
+    else:
+        click.echo(f"Posted to team {team_id} feed")
+
+
+@cli.command("feed")
+@click.option("--team-id", envvar="PHALANX_TEAM_ID", required=True)
+@click.option("--limit", default=50, help="Max messages to show")
+@click.option("--since", default=None, help="Minutes ago (e.g., 5)")
+@click.pass_context
+def feed_cmd(ctx, team_id, limit, since):
+    """Read the team feed (shared message log)."""
+    import time as _time
+
+    root = _get_root(ctx)
+    db = _get_db(root)
+
+    since_ts = None
+    if since:
+        since_ts = _time.time() - (int(since) * 60)
+
+    messages = db.get_feed(team_id, limit=limit, since=since_ts)
+
+    if ctx.obj.get("json_mode"):
+        _json_output({"team_id": team_id, "messages": messages, "count": len(messages)})
+    else:
+        if not messages:
+            click.echo("No messages in feed")
+        else:
+            for msg in messages:
+                from datetime import datetime
+
+                ts = datetime.fromtimestamp(msg["created_at"]).strftime("%H:%M:%S")
+                click.echo(f"  [{ts}] {msg['sender_id']}: {msg['content'][:200]}")
 
 
 # ── send-keys ────────────────────────────────────────────────────────
@@ -493,6 +513,49 @@ def send_keys_cmd(ctx, agent_id, keys, no_enter):
         else:
             click.echo(f"Failed to send keys to {agent_id}", err=True)
             raise SystemExit(1)
+
+
+# ── resume ───────────────────────────────────────────────────────────
+
+
+@cli.command("resume")
+@click.argument("team_id")
+@click.option("--all-agents", is_flag=True, help="Resume all dead agents, not just the lead")
+@click.pass_context
+def resume_cmd(ctx, team_id, all_agents):
+    """Resume a stopped/dead team by restarting its team lead."""
+    from phalanx.monitor.heartbeat import HeartbeatMonitor
+    from phalanx.process.manager import ProcessManager
+    from phalanx.team.orchestrator import resume_team
+
+    root = _get_root(ctx)
+    phalanx_config = _get_config(root)
+    db = _get_db(root)
+
+    team = db.get_team(team_id)
+    if team is None:
+        click.echo(f"Error: Team '{team_id}' not found", err=True)
+        raise SystemExit(1)
+
+    pm = ProcessManager(root)
+    hb = HeartbeatMonitor(idle_timeout=phalanx_config.idle_timeout_seconds)
+
+    result = resume_team(
+        phalanx_root=root,
+        db=db,
+        process_manager=pm,
+        heartbeat_monitor=hb,
+        team_id=team_id,
+        resume_all=all_agents,
+        auto_approve=ctx.obj.get("auto_approve", False),
+    )
+
+    if ctx.obj.get("json_mode"):
+        _json_output({"ok": True, **result})
+    else:
+        click.echo(f"Team {team_id} resumed")
+        for agent_id in result.get("resumed_agents", []):
+            click.echo(f"  Resumed: {agent_id}")
 
 
 # ── stop / stop-agent ───────────────────────────────────────────────
