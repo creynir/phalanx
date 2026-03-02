@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from pathlib import Path
 
@@ -11,6 +12,210 @@ from phalanx.monitor.heartbeat import HeartbeatMonitor
 from phalanx.process.manager import ProcessManager
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Resume context builder
+# ---------------------------------------------------------------------------
+
+
+def _build_resume_prompt(
+    phalanx_root: Path,
+    db: StateDB,
+    agent: dict,
+) -> str:
+    """Build a context-enriched prompt for a resumed agent.
+
+    Instead of replaying the original task.md (which gives the agent zero
+    memory of its prior session), this injects:
+      - The original task
+      - The agent's own previous artifact (if any)
+      - Team state: every worker's status and artifact summary
+      - Any pending messages from the main agent
+
+    The result overwrites task.md so the agent starts with full context.
+    """
+    team_id = agent["team_id"]
+    agent_id = agent["id"]
+    is_lead = agent["role"] == "lead"
+    original_task = agent.get("task", "")
+
+    # Load soul template
+    soul_dir = Path(__file__).parent.parent / "soul"
+    soul_file = soul_dir / ("team_lead.md" if is_lead else "worker.md")
+    soul_content = ""
+    if soul_file.exists():
+        soul_content = soul_file.read_text(encoding="utf-8")
+
+    # Gather team state
+    all_agents = db.list_agents(team_id)
+
+    if is_lead:
+        return _build_lead_resume(
+            phalanx_root,
+            team_id,
+            agent_id,
+            original_task,
+            soul_content,
+            all_agents,
+        )
+    else:
+        return _build_worker_resume(
+            phalanx_root,
+            team_id,
+            agent_id,
+            original_task,
+            soul_content,
+            all_agents,
+        )
+
+
+def _build_lead_resume(
+    phalanx_root: Path,
+    team_id: str,
+    agent_id: str,
+    original_task: str,
+    soul_content: str,
+    all_agents: list[dict],
+) -> str:
+    """Build resume prompt for a team lead."""
+    workers = [a for a in all_agents if a["role"] != "lead"]
+
+    # Build worker list with current statuses
+    worker_lines = []
+    for w in workers:
+        line = f"- {w['id']} (role={w['role']}, status={w['status']}"
+        art = read_agent_artifact(phalanx_root, team_id, w["id"])
+        if art:
+            line += f", artifact={art.status}"
+        else:
+            line += ", artifact=none"
+        line += ")"
+        worker_lines.append(line)
+    worker_list_str = "\n".join(worker_lines) if worker_lines else "(no workers)"
+
+    # Build worker artifact summaries
+    artifact_sections = []
+    for w in workers:
+        art = read_agent_artifact(phalanx_root, team_id, w["id"])
+        if art:
+            output = art.output
+            if isinstance(output, str):
+                try:
+                    output = json.loads(output)
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            artifact_sections.append(
+                f"### {w['id']} (status: {art.status})\n```json\n"
+                f"{json.dumps(output, indent=2, ensure_ascii=False)}\n```"
+            )
+
+    # Read pending messages from main agent
+    msg_dir = phalanx_root / "teams" / team_id / "messages"
+    pending_msgs = []
+    if msg_dir.exists():
+        for msg_file in sorted(msg_dir.iterdir()):
+            if msg_file.name.startswith(f"msg_{agent_id}"):
+                pending_msgs.append(msg_file.read_text(encoding="utf-8").strip())
+
+    # Substitute soul template placeholder
+    prompt = soul_content
+    if "{task}" in prompt:
+        prompt = prompt.replace("{task}", original_task)
+
+    # Append resume context section
+    resume_ctx = "\n\n---\n\n## RESUME CONTEXT — You are being resumed\n\n"
+    resume_ctx += (
+        "You were previously running this team and were suspended due to "
+        "idle timeout. You are now being restarted. DO NOT repeat work "
+        "that was already completed.\n\n"
+    )
+    resume_ctx += f"**Team ID:** {team_id}\n\n"
+    resume_ctx += f"**Original task:** {original_task}\n\n"
+
+    resume_ctx += "### Current Worker Status\n"
+    resume_ctx += worker_list_str + "\n\n"
+
+    if artifact_sections:
+        resume_ctx += "### Worker Artifacts from Previous Round\n"
+        resume_ctx += "\n\n".join(artifact_sections) + "\n\n"
+
+    # Lead's own previous artifact
+    lead_art = read_agent_artifact(phalanx_root, team_id, agent_id)
+    if lead_art:
+        output = lead_art.output
+        if isinstance(output, str):
+            try:
+                output = json.loads(output)
+            except (json.JSONDecodeError, TypeError):
+                pass
+        resume_ctx += (
+            "### Your Previous Artifact\n"
+            f"```json\n{json.dumps(output, indent=2, ensure_ascii=False)}\n```\n\n"
+        )
+
+    if pending_msgs:
+        resume_ctx += "### Pending Messages\n"
+        for i, msg in enumerate(pending_msgs, 1):
+            resume_ctx += f"**Message {i}:**\n{msg}\n\n"
+
+    resume_ctx += (
+        "### Instructions\n"
+        "1. Review the worker statuses and artifacts above.\n"
+        "2. If there are pending messages, follow their instructions.\n"
+        "3. Resume suspended/dead workers with `phalanx resume-agent <id>` "
+        "ONLY if they need to do NEW work.\n"
+        "4. Do NOT resume workers that already have successful artifacts "
+        "unless you have new tasks for them.\n"
+        "5. If all work is already complete, write your final team artifact.\n"
+    )
+
+    merged = f"Execute the following task immediately without summarising or asking questions:\n\n{prompt}{resume_ctx}"
+    return merged
+
+
+def _build_worker_resume(
+    phalanx_root: Path,
+    team_id: str,
+    agent_id: str,
+    original_task: str,
+    soul_content: str,
+    all_agents: list[dict],
+) -> str:
+    """Build resume prompt for a worker agent."""
+    prompt = soul_content
+    if "{task}" in prompt:
+        prompt = prompt.replace("{task}", original_task)
+
+    # Check if this worker already produced an artifact
+    art = read_agent_artifact(phalanx_root, team_id, agent_id)
+
+    resume_ctx = "\n\n---\n\n## RESUME CONTEXT — You are being resumed\n\n"
+    resume_ctx += "You were previously running and were suspended. You are now being restarted.\n\n"
+
+    if art:
+        output = art.output
+        if isinstance(output, str):
+            try:
+                output = json.loads(output)
+            except (json.JSONDecodeError, TypeError):
+                pass
+        resume_ctx += (
+            "### Your Previous Artifact\n"
+            f"You already completed your original task and wrote this artifact:\n"
+            f"```json\n{json.dumps(output, indent=2, ensure_ascii=False)}\n```\n\n"
+            "**Do NOT redo this work.** Wait for a message from the team lead "
+            "with your new assignment. Check for pending messages by reading "
+            "any files referenced in prompts. If no new task arrives within "
+            "30 seconds, run `phalanx feed` to check the team feed.\n"
+        )
+    else:
+        resume_ctx += (
+            "You did not complete your previous task. Pick up where you left off and complete it.\n"
+        )
+
+    merged = f"Execute the following task immediately without summarising or asking questions:\n\n{prompt}{resume_ctx}"
+    return merged
 
 
 def get_team_status(db: StateDB, team_id: str) -> dict | None:
@@ -79,43 +284,17 @@ def resume_team(
 
         agent_id = agent["id"]
         backend = get_backend(agent.get("backend", "cursor"))
-        chat_id = agent.get("chat_id")
 
-        if chat_id:
-            agent_proc = process_manager.spawn_resume(
-                team_id=team_id,
-                agent_id=agent_id,
-                backend=backend,
-                chat_id=chat_id,
-                auto_approve=auto_approve,
-            )
-        else:
-            task_file = phalanx_root / "teams" / team_id / "agents" / agent_id / "task.md"
-            soul_dir = Path(__file__).parent.parent / "soul"
-            soul_file = soul_dir / ("team_lead.md" if is_lead else "worker.md")
-            if not soul_file.exists():
-                soul_file = None
-
-            if not task_file.exists():
-                raw_task = agent.get("task", "")
-                if not raw_task:
-                    logger.warning(
-                        "Cannot resume agent %s: no chat_id, no task.md, no task in DB",
-                        agent_id,
-                    )
-                    continue
-                task_file.parent.mkdir(parents=True, exist_ok=True)
-                task_file.write_text(raw_task, encoding="utf-8")
-
-            agent_proc = process_manager.spawn(
-                team_id=team_id,
-                agent_id=agent_id,
-                backend=backend,
-                prompt=str(task_file),
-                soul_file=soul_file,
-                model=agent.get("model"),
-                auto_approve=auto_approve,
-            )
+        agent_proc = _resume_agent_with_context(
+            phalanx_root,
+            db,
+            process_manager,
+            agent,
+            backend,
+            auto_approve,
+        )
+        if agent_proc is None:
+            continue
 
         db.update_agent(agent_id, status="running")
         heartbeat_monitor.register(agent_id, agent_proc.stream_log)
@@ -149,49 +328,67 @@ def resume_single_agent(
         raise ValueError(f"Agent {agent_id} is {agent['status']}, not dead/suspended")
 
     team_id = agent["team_id"]
-    is_lead = agent["role"] == "lead"
     backend = get_backend(agent.get("backend", "cursor"))
-    chat_id = agent.get("chat_id")
 
-    if chat_id:
-        agent_proc = process_manager.spawn_resume(
-            team_id=team_id,
-            agent_id=agent_id,
-            backend=backend,
-            chat_id=chat_id,
-            auto_approve=auto_approve,
-        )
-    else:
-        task_file = phalanx_root / "teams" / team_id / "agents" / agent_id / "task.md"
-        soul_dir = Path(__file__).parent.parent / "soul"
-        soul_file = soul_dir / ("team_lead.md" if is_lead else "worker.md")
-        if not soul_file.exists():
-            soul_file = None
-
-        if not task_file.exists():
-            raw_task = agent.get("task", "")
-            if not raw_task:
-                raise ValueError(
-                    f"Cannot resume agent {agent_id}: no chat_id, no task.md, no task in DB"
-                )
-            task_file.parent.mkdir(parents=True, exist_ok=True)
-            task_file.write_text(raw_task, encoding="utf-8")
-
-        agent_proc = process_manager.spawn(
-            team_id=team_id,
-            agent_id=agent_id,
-            backend=backend,
-            prompt=str(task_file),
-            soul_file=soul_file,
-            model=agent.get("model"),
-            auto_approve=auto_approve,
-        )
+    agent_proc = _resume_agent_with_context(
+        phalanx_root,
+        db,
+        process_manager,
+        agent,
+        backend,
+        auto_approve,
+    )
+    if agent_proc is None:
+        raise ValueError(f"Cannot resume agent {agent_id}: no task in DB and no task.md on disk")
 
     db.update_agent(agent_id, status="running")
     heartbeat_monitor.register(agent_id, agent_proc.stream_log)
     logger.info("Resumed agent %s in team %s", agent_id, team_id)
 
     return {"agent_id": agent_id, "team_id": team_id, "status": "running"}
+
+
+def _resume_agent_with_context(
+    phalanx_root: Path,
+    db: StateDB,
+    process_manager: ProcessManager,
+    agent: dict,
+    backend,
+    auto_approve: bool,
+):
+    """Resume an agent with a context-enriched prompt.
+
+    Returns the AgentProcess on success, or None if the agent can't be resumed.
+    """
+    agent_id = agent["id"]
+    team_id = agent["team_id"]
+    chat_id = agent.get("chat_id")
+
+    if chat_id:
+        return process_manager.spawn_resume(
+            team_id=team_id,
+            agent_id=agent_id,
+            backend=backend,
+            chat_id=chat_id,
+            auto_approve=auto_approve,
+        )
+
+    # Build context-enriched resume prompt
+    resume_prompt = _build_resume_prompt(phalanx_root, db, agent)
+
+    task_file = phalanx_root / "teams" / team_id / "agents" / agent_id / "task.md"
+    task_file.parent.mkdir(parents=True, exist_ok=True)
+    task_file.write_text(resume_prompt, encoding="utf-8")
+
+    return process_manager.spawn(
+        team_id=team_id,
+        agent_id=agent_id,
+        backend=backend,
+        prompt=str(task_file),
+        soul_file=None,  # soul is already in the resume prompt
+        model=agent.get("model"),
+        auto_approve=auto_approve,
+    )
 
 
 def _kill_team_monitor(team_id: str) -> None:
