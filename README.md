@@ -22,61 +22,27 @@ Initialize Phalanx in your workspace:
 phalanx init
 ```
 
-Create a team with a shared task:
+Start your main agent:
 
 ```bash
-phalanx --auto-approve create-team "refactor the auth module" --agents coder:2,reviewer
+phalanx --auto-approve monitor
 ```
 
-Or use a per-agent config file for full control:
+Then just talk to it:
 
-```bash
-phalanx --auto-approve create-team --config team.json
-```
+> "Spin up a team of 2 coders and a reviewer to refactor the auth module"
 
-Check progress:
+> "Have 3 agents audit the codebase — one for security, one for performance, one for reliability — and give me a consolidated report"
 
-```bash
-phalanx team-status <team-id>
-```
-
-Read the final consolidated result:
-
-```bash
-phalanx team-result <team-id>
-```
-
-## Per-Agent Config
-
-For distinct tasks per agent, pass a JSON config:
-
-```json
-{
-  "task": "Audit and improve the payments module",
-  "agents": [
-    {
-      "name": "security-review",
-      "role": "reviewer",
-      "prompt": "Review phalanx/payments.py for injection and auth issues. Write artifact with findings."
-    },
-    {
-      "name": "perf-coder",
-      "role": "coder",
-      "prompt": "Profile and optimize the slow paths in phalanx/payments.py. Write artifact with changes made.",
-      "worktree": "/path/to/isolated/worktree"
-    }
-  ]
-}
-```
-
-Each agent can have its own `worktree` path for full file isolation.
+The agent handles everything: creating the team, assigning tasks, monitoring workers, collecting results, and reporting back. You don't need to memorize any commands.
 
 ## How It Works
 
-1. **Workers run in isolation** — each agent lives in its own `tmux` session, optionally in a separate git worktree
-2. **A team lead coordinates** — monitors worker state, reacts to events, consolidates results
-3. **The daemon watches everything** — detects stalls/crashes, pushes real-time events to the team lead
-4. **Results flow back** — workers write JSON artifacts, team lead reads and consolidates them
+1. **You talk to your agent** — describe what you want in plain language
+2. **The agent creates a team** — spawning specialized sub-agents in isolated tmux sessions
+3. **Workers run in parallel** — each in its own session, optionally in a separate git worktree
+4. **The daemon watches everything** — detects stalls/crashes, pushes real-time events to the team lead
+5. **Results flow back** — workers write structured artifacts, team lead consolidates and reports to you
 
 ### Event-Driven Coordination
 
