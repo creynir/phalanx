@@ -178,8 +178,14 @@ def _launch_agent(
 @click.option("--agents", "-a", default="coder", help="Agent spec: role[:count],...")
 @click.option("--backend", "-b", default=None, help="Backend")
 @click.option("--model", "-m", default=None, help="Model")
+@click.option(
+    "--idle-timeout", type=int, default=None, help="Idle timeout in seconds (default: 1800)"
+)
+@click.option(
+    "--max-runtime", type=int, default=None, help="Max runtime in seconds (default: 1800)"
+)
 @click.pass_context
-def create_team_cmd(ctx, task, config_path, agents, backend, model):
+def create_team_cmd(ctx, task, config_path, agents, backend, model, idle_timeout, max_runtime):
     """Create a team with per-agent prompts (--config) or simple shared task."""
     from phalanx.monitor.heartbeat import HeartbeatMonitor
     from phalanx.process.manager import ProcessManager
@@ -190,8 +196,11 @@ def create_team_cmd(ctx, task, config_path, agents, backend, model):
     backend_name = backend or phalanx_config.default_backend
     auto_approve = ctx.obj.get("auto_approve", False)
 
+    effective_idle = idle_timeout or phalanx_config.idle_timeout_seconds
+    effective_max_runtime = max_runtime or phalanx_config.max_runtime_seconds
+
     pm = ProcessManager(root)
-    hb = HeartbeatMonitor(idle_timeout=phalanx_config.idle_timeout_seconds)
+    hb = HeartbeatMonitor(idle_timeout=effective_idle)
 
     if config_path:
         from phalanx.team.config import load_team_config
@@ -207,6 +216,8 @@ def create_team_cmd(ctx, task, config_path, agents, backend, model):
             backend_name=backend_name,
             auto_approve=auto_approve,
             config=phalanx_config,
+            idle_timeout=effective_idle,
+            max_runtime=effective_max_runtime,
         )
         result = {
             "ok": True,
@@ -232,6 +243,8 @@ def create_team_cmd(ctx, task, config_path, agents, backend, model):
             model=model or phalanx_config.default_model,
             auto_approve=auto_approve,
             config=phalanx_config,
+            idle_timeout=effective_idle,
+            max_runtime=effective_max_runtime,
         )
         result = {"ok": True, "team_id": team_id, "lead_id": lead_id}
 
@@ -295,8 +308,10 @@ def monitor_cmd(ctx, agent_id, team_id):
 
 @cli.command("team-monitor")
 @click.argument("team_id")
+@click.option("--idle-timeout", type=int, default=None, help="Idle timeout in seconds")
+@click.option("--max-runtime", type=int, default=None, help="Max runtime in seconds")
 @click.pass_context
-def team_monitor_cmd(ctx, team_id):
+def team_monitor_cmd(ctx, team_id, idle_timeout, max_runtime):
     """Per-team monitoring daemon. Auto-spawned by create-team in tmux."""
     from phalanx.monitor.heartbeat import HeartbeatMonitor
     from phalanx.monitor.stall import StallDetector
@@ -307,13 +322,16 @@ def team_monitor_cmd(ctx, team_id):
     config = _get_config(root)
     db = _get_db(root)
 
+    effective_idle = idle_timeout or config.idle_timeout_seconds
+    effective_max_runtime = max_runtime or config.max_runtime_seconds
+
     team = db.get_team(team_id)
     if team is None:
         click.echo(f"Error: Team '{team_id}' not found", err=True)
         raise SystemExit(1)
 
     pm = ProcessManager(root)
-    hb = HeartbeatMonitor(idle_timeout=config.idle_timeout_seconds)
+    hb = HeartbeatMonitor(idle_timeout=effective_idle)
 
     agents = db.list_agents(team_id)
     for agent in agents:
@@ -322,13 +340,16 @@ def team_monitor_cmd(ctx, team_id):
             hb.register(agent["id"], stream_log)
         pm.discover_agent(team_id, agent["id"])
 
-    sd = StallDetector(pm, hb, idle_timeout=config.idle_timeout_seconds, db=db)
+    sd = StallDetector(pm, hb, idle_timeout=effective_idle, db=db)
 
     lead_agents = [a for a in agents if a.get("role") == "lead"]
     lead_agent_id = lead_agents[0]["id"] if lead_agents else None
     message_dir = root / "teams" / team_id / "messages"
 
-    click.echo(f"Team monitor started for {team_id} ({len(agents)} agents)")
+    click.echo(
+        f"Team monitor started for {team_id} ({len(agents)} agents, "
+        f"idle={effective_idle}s, max_runtime={effective_max_runtime}s)"
+    )
     run_team_monitor(
         team_id=team_id,
         db=db,
@@ -336,7 +357,7 @@ def team_monitor_cmd(ctx, team_id):
         heartbeat_monitor=hb,
         stall_detector=sd,
         poll_interval=config.monitor_poll_interval,
-        idle_timeout=config.idle_timeout_seconds,
+        idle_timeout=effective_idle,
         lead_agent_id=lead_agent_id,
         message_dir=message_dir,
     )
@@ -444,16 +465,31 @@ def message_cmd(ctx, team_id, text):
 
     agents = db.list_agents(team_id)
     lead = next((a for a in agents if a["role"] == "lead"), None)
-    delivered = False
 
-    if lead and lead["status"] == "running":
-        pm = ProcessManager(root)
-        delivered = deliver_message(pm, lead["id"], text)
+    if lead is None:
+        click.echo(f"Error: No team lead found for team '{team_id}'", err=True)
+        raise SystemExit(1)
+
+    if lead["status"] != "running":
+        status = lead["status"]
+        click.echo(
+            f"Error: Team lead is {status} — message not delivered.\n"
+            f"Use 'phalanx resume {team_id}' to restart it.",
+            err=True,
+        )
+        if ctx.obj.get("json_mode"):
+            _json_output(
+                {"ok": False, "team_id": team_id, "delivered": False, "lead_status": status}
+            )
+        raise SystemExit(1)
+
+    pm = ProcessManager(root)
+    delivered = deliver_message(pm, lead["id"], text)
 
     if ctx.obj.get("json_mode"):
-        _json_output({"ok": True, "team_id": team_id, "delivered": delivered})
+        _json_output({"ok": delivered, "team_id": team_id, "delivered": delivered})
     else:
-        click.echo(f"Message sent to team {team_id}")
+        click.echo(f"Message delivered to team lead ({lead['id']})")
 
 
 @cli.command("message-agent")
@@ -473,15 +509,24 @@ def message_agent_cmd(ctx, agent_id, text):
         click.echo(f"Agent '{agent_id}' not found", err=True)
         raise SystemExit(1)
 
-    delivered = False
-    if agent["status"] == "running":
-        pm = ProcessManager(root)
-        delivered = deliver_message(pm, agent_id, text)
+    if agent["status"] != "running":
+        status = agent["status"]
+        click.echo(
+            f"Error: Agent {agent_id} is {status} — message not delivered.\n"
+            f"Use 'phalanx resume-agent {agent_id}' to restart it.",
+            err=True,
+        )
+        if ctx.obj.get("json_mode"):
+            _json_output({"ok": False, "agent_id": agent_id, "delivered": False, "status": status})
+        raise SystemExit(1)
+
+    pm = ProcessManager(root)
+    delivered = deliver_message(pm, agent_id, text)
 
     if ctx.obj.get("json_mode"):
-        _json_output({"ok": True, "agent_id": agent_id, "delivered": delivered})
+        _json_output({"ok": delivered, "agent_id": agent_id, "delivered": delivered})
     else:
-        click.echo(f"Message sent to agent {agent_id}")
+        click.echo(f"Message delivered to agent {agent_id}")
 
 
 @cli.command("broadcast")
@@ -497,13 +542,30 @@ def broadcast_cmd(ctx, team_id, text):
     db = _get_db(root)
     pm = ProcessManager(root)
 
+    agents = {a["id"]: a for a in db.list_agents(team_id)}
     results = broadcast_message(pm, db, team_id, text)
 
+    delivered = sum(1 for v in results.values() if v)
+    skipped = {
+        aid: agents[aid]["status"] for aid, ok in results.items() if not ok and aid in agents
+    }
+
     if ctx.obj.get("json_mode"):
-        _json_output({"ok": True, "team_id": team_id, "results": results})
+        _json_output(
+            {
+                "ok": delivered > 0,
+                "team_id": team_id,
+                "delivered": delivered,
+                "total": len(results),
+                "results": results,
+                "skipped": skipped,
+            }
+        )
     else:
-        delivered = sum(1 for v in results.values() if v)
         click.echo(f"Broadcast to team {team_id}: {delivered}/{len(results)} delivered")
+        if skipped:
+            skipped_list = ", ".join(f"{aid} ({st})" for aid, st in skipped.items())
+            click.echo(f"  Skipped: {skipped_list}")
 
 
 # ── post / feed (team communication) ─────────────────────────────────

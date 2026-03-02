@@ -43,6 +43,8 @@ def create_team_from_config(
     backend_name: str = "cursor",
     auto_approve: bool = False,
     config: PhalanxConfig | None = None,
+    idle_timeout: int = 1800,
+    max_runtime: int = 1800,
 ) -> tuple[str, str, list[str]]:
     """Create a team from a full config with per-agent prompts.
 
@@ -103,7 +105,7 @@ def create_team_from_config(
         config=config,
     )
 
-    _spawn_team_monitor(phalanx_root, team_id)
+    _spawn_team_monitor(phalanx_root, team_id, idle_timeout=idle_timeout, max_runtime=max_runtime)
 
     logger.info(
         "Created team %s with lead %s and %d workers",
@@ -125,6 +127,8 @@ def create_team(
     model: str | None = None,
     auto_approve: bool = False,
     config: PhalanxConfig | None = None,
+    idle_timeout: int = 1800,
+    max_runtime: int = 1800,
 ) -> tuple[str, str]:
     """Create a team using the simple --task + --agents spec.
 
@@ -179,19 +183,28 @@ def create_team(
         config=config,
     )
 
-    _spawn_team_monitor(phalanx_root, team_id)
+    _spawn_team_monitor(phalanx_root, team_id, idle_timeout=idle_timeout, max_runtime=max_runtime)
 
     logger.info("Created team %s with lead %s", team_id, lead_id)
     return team_id, lead_id
 
 
-def _spawn_team_monitor(phalanx_root: Path, team_id: str) -> None:
+def _spawn_team_monitor(
+    phalanx_root: Path,
+    team_id: str,
+    idle_timeout: int | None = None,
+    max_runtime: int | None = None,
+) -> None:
     """Spawn the team-monitor daemon in its own tmux session."""
     import sys
 
     session_name = f"phalanx-mon-{team_id}"
     python = shlex.quote(sys.executable)
     cmd = f"{python} -m phalanx.cli --root {shlex.quote(str(phalanx_root))} team-monitor {team_id}"
+    if idle_timeout is not None:
+        cmd += f" --idle-timeout {idle_timeout}"
+    if max_runtime is not None:
+        cmd += f" --max-runtime {max_runtime}"
 
     try:
         server = libtmux.Server()

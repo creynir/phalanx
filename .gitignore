@@ -30,3 +30,6 @@ hello.py
 *-config.json
 .claude/
 .gemini/
+
+# Research, plans, and agent output collector
+.agora/

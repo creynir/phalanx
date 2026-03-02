@@ -13,7 +13,7 @@ import time
 from contextlib import contextmanager
 from pathlib import Path
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS teams (
@@ -42,8 +42,6 @@ CREATE TABLE IF NOT EXISTS agents (
     last_heartbeat  REAL,
     attempts        INTEGER DEFAULT 0,
     max_retries     INTEGER DEFAULT 3,
-    stall_seconds   INTEGER DEFAULT 1800,
-    max_runtime     INTEGER DEFAULT 1800,
     prompt_state    TEXT,
     prompt_screen   TEXT
 );
@@ -155,6 +153,13 @@ class StateDB:
                     "created_at REAL NOT NULL)"
                 )
 
+        if from_version < 4:
+            try:
+                conn.execute("ALTER TABLE agents DROP COLUMN stall_seconds")
+                conn.execute("ALTER TABLE agents DROP COLUMN max_runtime")
+            except Exception:
+                pass  # columns may not exist in fresh DBs
+
         conn.execute("UPDATE schema_version SET version = ?", (SCHEMA_VERSION,))
 
     @contextmanager
@@ -230,8 +235,8 @@ class StateDB:
             conn.execute(
                 "INSERT INTO agents "
                 "(id, team_id, role, task, status, model, backend, worktree, "
-                " created_at, updated_at, stall_seconds, max_runtime) "
-                "VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, 1800, 1800)",
+                " created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?)",
                 (agent_id, team_id, role, task, model, backend, worktree, now, now),
             )
 

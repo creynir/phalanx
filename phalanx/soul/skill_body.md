@@ -9,7 +9,7 @@ or do anything that benefits from multiple agents — use phalanx.
 ### Team lifecycle
 ```bash
 # Create a team (--auto-approve is REQUIRED, always include it)
-phalanx --auto-approve create-team --task "description" --agents <role>[:<count>],... [--worktree] --json
+phalanx --auto-approve create-team --task "description" --agents <role>[:<count>],... [--worktree] [--idle-timeout 3600] [--max-runtime 7200] --json
 
 # Check team progress
 phalanx team-status <team-id> --json
