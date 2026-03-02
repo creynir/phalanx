@@ -66,6 +66,19 @@ def run_team_monitor(
             agent_id = agent["id"]
             active_count += 1
 
+            # Re-discover agents that were resumed externally (e.g., by
+            # the team lead calling `phalanx resume-agent`).  After
+            # kill_agent the ProcessManager forgets the agent; we need
+            # to pick up the new tmux session so stall_detector doesn't
+            # immediately report DEAD.
+            if process_manager.get_process(agent_id) is None:
+                proc = process_manager.discover_agent(team_id, agent_id)
+                if proc is not None:
+                    stream_log = proc.stream_log
+                    if heartbeat_monitor.get_state(agent_id) is None:
+                        heartbeat_monitor.register(agent_id, stream_log)
+                    logger.info("Re-discovered resumed agent %s", agent_id)
+
             try:
                 event = stall_detector.check_agent(agent_id)
 
