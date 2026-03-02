@@ -144,6 +144,35 @@ def _check_connection_lost(lines: list[str]) -> bool:
     )
 
 
+@_register_pattern("process_exited")
+def _check_process_exited(lines: list[str]) -> bool:
+    """Detect when the agent binary has crashed and the tmux session fell
+    back to a bare shell prompt.  Garbled output like ``zsh: command not found``
+    is a strong signal that buffered agent output was dumped into the shell.
+    """
+    if not lines:
+        return False
+    tail = "\n".join(lines[-12:])
+
+    shell_error_count = len(
+        re.findall(
+            r"zsh:|bash:|sh:|command not found|parse error|no such file",
+            tail,
+            re.IGNORECASE,
+        )
+    )
+    if shell_error_count >= 2:
+        return True
+
+    last_lines = [ln.strip() for ln in lines[-4:] if ln.strip()]
+    if last_lines:
+        last = last_lines[-1]
+        if re.match(r"^[\w@.~/ ()-]+[$%#>]\s*$", last):
+            return True
+
+    return False
+
+
 @_register_pattern("agent_idle")
 def _check_agent_idle(lines: list[str]) -> bool:
     """Detect if the agent has returned to its input prompt.
@@ -239,10 +268,12 @@ class StallDetector:
         self._last_screen_check[agent_id] = now
         screen = self._pm.capture_screen(agent_id)
         if screen is None:
-            logger.warning(
-                "capture_screen returned None for agent %s — tmux session may be gone", agent_id
+            logger.warning("capture_screen returned None for agent %s — treating as dead", agent_id)
+            return StallEvent(
+                agent_id=agent_id,
+                state=AgentState.DEAD,
+                timestamp=now,
             )
-            return None
 
         # 5. Check for blocked_on_prompt
         prompt_detection = self._detect_prompt(agent_id, screen)

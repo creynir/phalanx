@@ -149,7 +149,7 @@ def run_team_monitor(
 
                     if event.prompt_type == "agent_idle" and agent_id != lead_agent_id:
                         _nudge_idle_agent(process_manager, agent_id)
-                    elif event.prompt_type == "connection_lost":
+                    elif event.prompt_type in ("connection_lost", "process_exited"):
                         _auto_restart_agent(
                             process_manager,
                             db,
@@ -222,7 +222,7 @@ def _auto_restart_agent(
     """
     from phalanx.team.orchestrator import resume_single_agent
 
-    logger.warning("Auto-restarting agent %s (connection_lost)", agent_id)
+    logger.warning("Auto-restarting agent %s (infrastructure failure)", agent_id)
     process_manager.kill_agent(agent_id)
     db.update_agent(agent_id, status="dead")
 
@@ -242,7 +242,7 @@ def _auto_restart_agent(
             message_dir,
             "worker_restarted",
             agent_id,
-            detail="connection_lost — auto-recovered by daemon",
+            detail="infrastructure failure — auto-recovered by daemon",
         )
     except Exception as e:
         logger.error("Failed to auto-restart agent %s: %s", agent_id, e)

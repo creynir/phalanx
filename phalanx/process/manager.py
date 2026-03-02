@@ -87,13 +87,30 @@ class AgentProcess:
             return None
 
     def is_alive(self) -> bool:
-        """Check if the tmux session still exists."""
+        """Check if the agent process is alive inside its tmux session.
+
+        Returns False if the tmux session is gone OR if the foreground process
+        has fallen back to a shell (zsh/bash), which means the agent binary
+        crashed or exited.
+        """
         try:
             server = libtmux.Server()
-            server.sessions.get(session_name=self.session_name)
-            return True
+            session = server.sessions.get(session_name=self.session_name)
         except Exception:
             return False
+
+        try:
+            pane = session.active_window.active_pane
+            if pane is None:
+                return False
+            current_cmd = pane.pane_current_command or ""
+            shell_names = {"zsh", "bash", "sh", "fish", "dash"}
+            if current_cmd.lower() in shell_names:
+                return False
+        except Exception:
+            pass
+
+        return True
 
 
 class ProcessManager:
