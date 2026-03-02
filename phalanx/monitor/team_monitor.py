@@ -76,6 +76,20 @@ def run_team_monitor(
                 if updated is not None and updated.last_heartbeat > prev_ts:
                     db.update_heartbeat(agent_id)
 
+                # Check for newly written artifacts regardless of stall events.
+                # This must run before the `continue` so the lead is notified
+                # as soon as a worker's artifact_status flips to success.
+                refreshed = db.get_agent(agent_id)
+                if refreshed and refreshed.get("artifact_status") == "success":
+                    if agent.get("artifact_status") != "success":
+                        _notify_lead(
+                            process_manager,
+                            lead_agent_id,
+                            message_dir,
+                            "worker_done",
+                            agent_id,
+                        )
+
                 if event is None:
                     continue
 
@@ -120,7 +134,7 @@ def run_team_monitor(
                         payload={"prompt_type": event.prompt_type},
                     )
 
-                    if event.prompt_type == "agent_idle":
+                    if event.prompt_type == "agent_idle" and agent_id != lead_agent_id:
                         _nudge_idle_agent(process_manager, agent_id)
                     else:
                         _notify_lead(
@@ -130,14 +144,6 @@ def run_team_monitor(
                             "worker_blocked",
                             agent_id,
                             detail=event.prompt_type or "",
-                        )
-
-                # Notify lead when artifact is written
-                refreshed = db.get_agent(agent_id)
-                if refreshed and refreshed.get("artifact_status") == "success":
-                    if agent.get("artifact_status") != "success":
-                        _notify_lead(
-                            process_manager, lead_agent_id, message_dir, "worker_done", agent_id
                         )
 
             except Exception as e:
