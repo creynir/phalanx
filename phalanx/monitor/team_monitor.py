@@ -149,6 +149,16 @@ def run_team_monitor(
 
                     if event.prompt_type == "agent_idle" and agent_id != lead_agent_id:
                         _nudge_idle_agent(process_manager, agent_id)
+                    elif event.prompt_type == "connection_lost":
+                        _auto_restart_agent(
+                            process_manager,
+                            db,
+                            heartbeat_monitor,
+                            team_id,
+                            agent_id,
+                            lead_agent_id,
+                            message_dir,
+                        )
                     else:
                         _notify_lead(
                             process_manager,
@@ -194,6 +204,56 @@ def _notify_lead(
         deliver_message(process_manager, lead_agent_id, msg, message_dir)
     except Exception as e:
         logger.warning("Failed to notify lead %s: %s", lead_agent_id, e)
+
+
+def _auto_restart_agent(
+    process_manager: ProcessManager,
+    db: StateDB,
+    heartbeat_monitor: HeartbeatMonitor,
+    team_id: str,
+    agent_id: str,
+    lead_agent_id: str | None,
+    message_dir: Path | None,
+) -> None:
+    """Auto-restart an agent that hit a recoverable infrastructure error.
+
+    Kills the stuck session, marks it dead, then attempts resume.
+    Notifies the lead of the restart.
+    """
+    from phalanx.team.orchestrator import resume_single_agent
+
+    logger.warning("Auto-restarting agent %s (connection_lost)", agent_id)
+    process_manager.kill_agent(agent_id)
+    db.update_agent(agent_id, status="dead")
+
+    try:
+        resume_single_agent(
+            phalanx_root=process_manager._root,
+            db=db,
+            process_manager=process_manager,
+            heartbeat_monitor=heartbeat_monitor,
+            agent_id=agent_id,
+            auto_approve=True,
+        )
+        logger.info("Auto-restarted agent %s successfully", agent_id)
+        _notify_lead(
+            process_manager,
+            lead_agent_id,
+            message_dir,
+            "worker_restarted",
+            agent_id,
+            detail="connection_lost — auto-recovered by daemon",
+        )
+    except Exception as e:
+        logger.error("Failed to auto-restart agent %s: %s", agent_id, e)
+        _notify_lead(
+            process_manager,
+            lead_agent_id,
+            message_dir,
+            "worker_restart_failed",
+            agent_id,
+            detail=str(e),
+        )
 
 
 def _nudge_idle_agent(process_manager: ProcessManager, agent_id: str) -> None:

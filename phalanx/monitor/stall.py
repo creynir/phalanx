@@ -132,6 +132,18 @@ def _check_error_prompt(lines: list[str]) -> bool:
     )
 
 
+@_register_pattern("connection_lost")
+def _check_connection_lost(lines: list[str]) -> bool:
+    text = "\n".join(lines[-8:])
+    return bool(
+        re.search(
+            r"(Connection lost|connection error|disconnected|Session expired)",
+            text,
+            re.IGNORECASE,
+        )
+    )
+
+
 @_register_pattern("agent_idle")
 def _check_agent_idle(lines: list[str]) -> bool:
     """Detect if the agent has returned to its input prompt.
