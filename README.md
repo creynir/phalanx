@@ -2,7 +2,7 @@
 
 Open-source, vendor-agnostic multi-agent orchestration CLI.
 
-Phalanx lets you spin up teams of AI coding agents from any supported backend (Cursor, Claude Code, Gemini CLI, Codex CLI) and coordinate them through a single unified interface — with isolated worktrees, shared message feeds, artifact collection, and automatic stall detection.
+Phalanx lets you spin up teams of AI coding agents from any supported backend (Cursor, Claude Code, Gemini CLI, Codex CLI) and coordinate them through a single unified interface — with state persistence, shared message feeds, artifact collection, and automatic TUI stall detection.
 
 ## Install
 
@@ -39,9 +39,14 @@ You can also run phalanx commands directly as a tool (e.g. from an already-runni
 
 1. **You talk to your agent** — describe what you want in plain language
 2. **The agent creates a team** — spawning specialized sub-agents in isolated tmux sessions
-3. **Workers run in parallel** — each in its own session, optionally in a separate git worktree
-4. **The daemon watches everything** — detects stalls/crashes, pushes real-time events to the team lead
+3. **Workers run in parallel** — each in its own session, executing tasks autonomously
+4. **The daemon watches everything** — detects TUI crashes, infinite loops, and shell stalls, and safely auto-restarts broken agents
 5. **Results flow back** — workers write structured artifacts, team lead consolidates and reports to you
+
+### TUI Resilience & Stall Detection
+CLI agents running in TUI environments are notoriously brittle. They crash on bad prompt injections, hang waiting for tool approvals, or get stuck in "ghost sessions" where the binary dies but the terminal remains open.
+
+Phalanx actively monitors the `tmux` pane stream of every worker. If an agent hangs, drops into an interactive shell, or corrupts its buffer (e.g., getting stuck in a `quote>` loop), Phalanx automatically kills the session and resumes the agent with its full context intact, ensuring team execution rarely grinds to a halt.
 
 ### Event-Driven Coordination
 
@@ -84,11 +89,9 @@ Phalanx automatically selects the best model per role and backend. Configurable 
 
 - **State**: SQLite (WAL mode) at `.phalanx/state.db`
 - **Process isolation**: Agents run interactively inside background `tmux` sessions. Output is captured via `pipe-pane` into `stream.log`, enabling screen-scrape-based stall detection without fragile prompt engineering.
-- **Real-time messaging**: Because agents run live in `tmux`, Phalanx delivers messages by injecting keystrokes — instant, no session restart required.
+- **Resilient Context Delivery**: Instead of injecting multi-line payloads into shell inputs which corrupts `zsh`/`bash` buffers, Phalanx delivers context via physical files on disk, instructing the agent to read them.
 - **Event-push daemon**: The per-team monitor daemon detects state changes and pushes structured notifications to the team lead, so the lead is reactive rather than polling.
 - **Artifacts**: Structured JSON outputs written by each agent, readable by the lead and the orchestrator.
-- **Stall detection**: `stream.log` mtime and content hash are monitored. Idle agents are nudged; timed-out agents are killed and DB state is updated.
-- **Spawn stagger**: Backends with startup races (e.g. Cursor's `cli-config.json`) are staggered automatically.
 - **GC**: Opportunistic cleanup of dead teams, running on standard CLI commands.
 
 ## CLI Reference
@@ -99,7 +102,7 @@ Phalanx automatically selects the best model per role and backend. Configurable 
 |---------|-------------|
 | `phalanx init` | Initialize `.phalanx/` in workspace |
 | `phalanx create-team "task"` | Create a team with a shared task |
-| `phalanx create-team --config file.json` | Create a team with per-agent prompts and worktrees |
+| `phalanx create-team --config file.json` | Create a team with per-agent prompts |
 | `phalanx team-status <id>` | Show team and all agent statuses |
 | `phalanx team-result <id>` | Read team lead's final consolidated artifact |
 | `phalanx list-teams` | List all teams |
