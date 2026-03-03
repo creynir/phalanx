@@ -33,13 +33,12 @@ class CursorBackend(AgentBackend):
             cmd += ["--model", model]
         if worktree:
             cmd += ["--worktree", worktree]
-        # Pass task content inline rather than as @file reference.
-        # @file syntax causes Cursor TUI to treat the content as a document
-        # to read and summarise rather than as a command to execute.
+        # For Cursor TUI, passing a massive inline string with newlines
+        # via tmux send-keys causes shell buffer corruption.
+        # Instead, we pass a short instruction to read the file.
         prompt_path = Path(prompt)
         if prompt_path.exists():
-            task_content = prompt_path.read_text(encoding="utf-8")
-            cmd.append(task_content)
+            cmd.append(f"Read and execute instructions from {prompt_path.absolute()}")
         else:
             cmd.append(prompt)
         return cmd

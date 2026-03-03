@@ -51,9 +51,10 @@ class TestCursorBackend:
         task_file = tmp_path / "task.md"
         task_file.write_text("Do the thing now.")
         cmd = self.b.build_start_command(str(task_file))
-        # File content is inlined, not passed as @file reference
-        assert "Do the thing now." in cmd
-        assert f"@{task_file}" not in cmd
+        # File content is now passed via an instruction, not inlined
+        assert any("Read and execute instructions from" in c for c in cmd)
+        assert any(str(task_file.absolute()) in c for c in cmd)
+        assert "Do the thing now." not in cmd
 
     def test_prompt_with_soul_file(self, tmp_path):
         soul = tmp_path / "soul.md"
@@ -63,7 +64,9 @@ class TestCursorBackend:
         # soul_file is now merged into task by spawn.py before build_start_command
         # is called with soul_file=None, so this tests legacy path
         cmd = self.b.build_start_command(str(task_file), soul_file=None)
-        assert "Do the thing now." in cmd
+        assert any("Read and execute instructions from" in c for c in cmd)
+        assert any(str(task_file.absolute()) in c for c in cmd)
+        assert "Do the thing now." not in cmd
 
     def test_headless_manual_approve(self):
         cmd = self.b.build_start_command("task", auto_approve=False)

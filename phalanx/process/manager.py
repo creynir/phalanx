@@ -259,7 +259,7 @@ class ProcessManager:
                     cmd_parts.insert(1, flag)
 
         cmd_str = shlex.join(cmd_parts)
-        pane.send_keys(cmd_str, enter=True)
+        pane.send_keys(cmd_str, enter=True, literal=True)
 
         agent_proc = AgentProcess(
             agent_id=agent_id,
@@ -317,7 +317,7 @@ class ProcessManager:
                     cmd_parts.insert(1, flag)
 
         cmd_str = shlex.join(cmd_parts)
-        pane.send_keys(cmd_str, enter=True)
+        pane.send_keys(cmd_str, enter=True, literal=True)
 
         agent_proc = AgentProcess(
             agent_id=agent_id,
