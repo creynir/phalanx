@@ -11,8 +11,6 @@ import shutil
 import time
 from pathlib import Path
 
-from phalanx.process.worktree import WORKTREE_BASE
-
 logger = logging.getLogger(__name__)
 
 DEFAULT_GC_HOURS = 24
@@ -39,9 +37,10 @@ def _cleanup_worktrees(team_id: str) -> None:
     with the team_id. Uses shutil.rmtree rather than `git worktree remove`
     because the original repo path is unavailable during GC.
     """
-    if not WORKTREE_BASE.exists():
+    worktree_base = Path(".phalanx/worktrees")
+    if not worktree_base.exists():
         return
-    for repo_dir in WORKTREE_BASE.iterdir():
+    for repo_dir in worktree_base.iterdir():
         if not repo_dir.is_dir():
             continue
         for wt_dir in repo_dir.iterdir():
