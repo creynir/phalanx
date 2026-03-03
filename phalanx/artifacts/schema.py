@@ -9,16 +9,22 @@ from dataclasses import asdict, dataclass, field
 
 @dataclass
 class Artifact:
-    """Structured work product from an agent."""
+    """Structured work product from an agent.
 
-    status: str  # success, failure, escalation_required
+    v1.0.0: Added optional `debt` field for typed compromise tracking.
+    A "success" artifact is no longer terminal — agents must remain
+    responsive to post-artifact directives.
+    """
+
+    status: str  # success, failure, escalation
     output: dict | str = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
+    debt: list[dict] = field(default_factory=list)
     agent_id: str = ""
     team_id: str = ""
     created_at: float = field(default_factory=time.time)
 
-    VALID_STATUSES = ("success", "failure", "escalation_required")
+    VALID_STATUSES = ("success", "failure", "escalation")
 
     def validate(self) -> list[str]:
         errors = []

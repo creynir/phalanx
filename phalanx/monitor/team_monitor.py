@@ -37,6 +37,7 @@ def run_team_monitor(
     idle_timeout: int = 1800,
     lead_agent_id: str | None = None,
     message_dir: Path | None = None,
+    phalanx_root: Path | None = None,
 ) -> None:
     """Blocking loop that monitors all agents in a team.
 
@@ -60,7 +61,25 @@ def run_team_monitor(
 
         active_count = 0
         for agent in agents:
-            if agent["status"] in ("dead", "failed", "suspended"):
+            if agent["status"] in ("dead", "failed"):
+                continue
+
+            if agent["status"] == "suspended":
+                if _should_wake_suspended(db, agent):
+                    logger.info(
+                        "Waking suspended agent %s — post-artifact directives detected",
+                        agent["id"],
+                    )
+                    active_count += 1
+                    _wake_suspended_agent(
+                        phalanx_root=process_manager._root,
+                        db=db,
+                        process_manager=process_manager,
+                        heartbeat_monitor=heartbeat_monitor,
+                        agent=agent,
+                        lead_agent_id=lead_agent_id,
+                        message_dir=message_dir,
+                    )
                 continue
 
             agent_id = agent["id"]
@@ -90,17 +109,26 @@ def run_team_monitor(
                     db.update_heartbeat(agent_id)
 
                 # Check for newly written artifacts regardless of stall events.
-                # This must run before the `continue` so the lead is notified
-                # as soon as a worker's artifact_status flips to success.
                 refreshed = db.get_agent(agent_id)
-                if refreshed and refreshed.get("artifact_status") == "success":
-                    if agent.get("artifact_status") != "success":
+                if refreshed and refreshed.get("artifact_status"):
+                    prev_status = agent.get("artifact_status")
+                    new_status = refreshed["artifact_status"]
+                    if new_status == "success" and prev_status != "success":
                         _notify_lead(
                             process_manager,
                             lead_agent_id,
                             message_dir,
                             "worker_done",
                             agent_id,
+                        )
+                    elif new_status == "escalation" and prev_status != "escalation":
+                        _notify_lead(
+                            process_manager,
+                            lead_agent_id,
+                            message_dir,
+                            "worker_escalation",
+                            agent_id,
+                            detail="agent wrote escalation artifact — outer loop intervention needed",
                         )
 
                 if event is None:
@@ -148,12 +176,31 @@ def run_team_monitor(
                     )
 
                     if event.prompt_type == "agent_idle" and agent_id != lead_agent_id:
-                        _nudge_idle_agent(process_manager, agent_id)
+                        _nudge_idle_agent(process_manager, agent_id, message_dir)
                     elif event.prompt_type in ("connection_lost", "process_exited"):
-                        _auto_restart_agent(
+                        _handle_ghost_or_crash(
                             process_manager,
                             db,
                             heartbeat_monitor,
+                            team_id,
+                            agent_id,
+                            lead_agent_id,
+                            message_dir,
+                        )
+                    elif event.prompt_type == "buffer_corrupted":
+                        _handle_buffer_corruption(
+                            process_manager,
+                            db,
+                            heartbeat_monitor,
+                            team_id,
+                            agent_id,
+                            lead_agent_id,
+                            message_dir,
+                        )
+                    elif event.prompt_type == "rate_limited":
+                        _handle_rate_limit(
+                            process_manager,
+                            db,
                             team_id,
                             agent_id,
                             lead_agent_id,
@@ -206,6 +253,70 @@ def _notify_lead(
         logger.warning("Failed to notify lead %s: %s", lead_agent_id, e)
 
 
+def _handle_ghost_or_crash(
+    process_manager: ProcessManager,
+    db: StateDB,
+    heartbeat_monitor: HeartbeatMonitor,
+    team_id: str,
+    agent_id: str,
+    lead_agent_id: str | None,
+    message_dir: Path | None,
+) -> None:
+    """Handle ghost session or crash with restart loop protection.
+
+    Tracks ghost_restart_count in DB. When the count exceeds
+    max_ghost_restarts, escalates to the Outer Loop (Engineering Manager)
+    instead of restarting again — breaking the restart loop.
+    """
+    restart_count = db.increment_ghost_restart(agent_id)
+    restart_limit = db.get_ghost_restart_limit(agent_id)
+
+    if restart_count > restart_limit:
+        logger.error(
+            "Agent %s hit ghost restart limit (%d/%d) — escalating to Outer Loop",
+            agent_id,
+            restart_count,
+            restart_limit,
+        )
+        process_manager.kill_agent(agent_id)
+        db.update_agent(agent_id, status="failed")
+        db.log_event(
+            team_id,
+            "ghost_loop_escalation",
+            agent_id=agent_id,
+            payload={"restart_count": restart_count, "limit": restart_limit},
+        )
+
+        db.create_engineering_manager_entry(
+            team_id=team_id,
+            trigger_source="ghost_loop",
+            decision_json=None,
+        )
+
+        _notify_lead(
+            process_manager,
+            lead_agent_id,
+            message_dir,
+            "ghost_loop_escalation",
+            agent_id,
+            detail=(
+                f"agent hit ghost restart limit ({restart_count}/{restart_limit}) "
+                "— outer loop intervention needed"
+            ),
+        )
+        return
+
+    _auto_restart_agent(
+        process_manager,
+        db,
+        heartbeat_monitor,
+        team_id,
+        agent_id,
+        lead_agent_id,
+        message_dir,
+    )
+
+
 def _auto_restart_agent(
     process_manager: ProcessManager,
     db: StateDB,
@@ -235,6 +346,7 @@ def _auto_restart_agent(
             agent_id=agent_id,
             auto_approve=True,
         )
+        db.reset_ghost_restart_count(agent_id)
         logger.info("Auto-restarted agent %s successfully", agent_id)
         _notify_lead(
             process_manager,
@@ -256,11 +368,14 @@ def _auto_restart_agent(
         )
 
 
-def _nudge_idle_agent(process_manager: ProcessManager, agent_id: str) -> None:
+def _nudge_idle_agent(
+    process_manager: ProcessManager,
+    agent_id: str,
+    message_dir: Path | None = None,
+) -> None:
     """Send a nudge to an agent that is idle at the prompt without an artifact.
 
-    The agent has read its task and responded conversationally. We inject
-    an imperative follow-up so it actually executes.
+    Uses file-based delivery to avoid prompt injection vulnerabilities.
     """
     nudge = (
         "You have not completed your task yet. "
@@ -269,7 +384,152 @@ def _nudge_idle_agent(process_manager: ProcessManager, agent_id: str) -> None:
         "`phalanx write-artifact` with your results. Do not ask questions."
     )
     try:
-        process_manager.send_keys(agent_id, nudge, enter=True)
+        deliver_message(process_manager, agent_id, nudge, message_dir)
         logger.info("Nudged idle agent %s", agent_id)
     except Exception as e:
         logger.warning("Failed to nudge agent %s: %s", agent_id, e)
+
+
+def _handle_buffer_corruption(
+    process_manager: ProcessManager,
+    db: StateDB,
+    heartbeat_monitor: HeartbeatMonitor,
+    team_id: str,
+    agent_id: str,
+    lead_agent_id: str | None,
+    message_dir: Path | None,
+) -> None:
+    """Handle buffer corruption from prompt injection.
+
+    Sends Ctrl-C to escape quote mode, then falls back to file-based delivery.
+    After 3 failures, escalates to Engineering Manager.
+    """
+    logger.warning("Buffer corruption detected for agent %s", agent_id)
+
+    try:
+        process_manager.send_keys(agent_id, "C-c", enter=False)
+    except Exception:
+        pass
+
+    agent = db.get_agent(agent_id)
+    attempts = (agent.get("attempts") or 0) + 1 if agent else 1
+    db.update_agent(agent_id, attempts=attempts)
+    db.log_event(
+        team_id,
+        "buffer_corrupted",
+        agent_id=agent_id,
+        payload={"attempts": attempts},
+    )
+
+    if attempts >= 3:
+        logger.error(
+            "Agent %s buffer corruption repeated %d times — escalating", agent_id, attempts
+        )
+        _notify_lead(
+            process_manager,
+            lead_agent_id,
+            message_dir,
+            "prompt_delivery_failure",
+            agent_id,
+            detail=f"buffer corruption x{attempts} — needs outer loop intervention",
+        )
+    else:
+        _notify_lead(
+            process_manager,
+            lead_agent_id,
+            message_dir,
+            "worker_blocked",
+            agent_id,
+            detail="buffer_corrupted — escaped quote mode, retry via file delivery",
+        )
+
+
+def _should_wake_suspended(db: StateDB, agent: dict) -> bool:
+    """Check if a suspended agent with a success artifact should be woken.
+
+    Returns True if there are feed messages posted after the agent's artifact,
+    indicating the Engineering Manager or team lead wants it to do new work.
+    """
+    artifact_status = agent.get("artifact_status")
+    if artifact_status not in ("success", "escalation"):
+        return False
+
+    team_id = agent["team_id"]
+    agent_updated = agent.get("updated_at", 0)
+
+    try:
+        recent_feed = db.get_feed(team_id, limit=10, since=agent_updated)
+        return len(recent_feed) > 0
+    except Exception:
+        return False
+
+
+def _wake_suspended_agent(
+    phalanx_root: Path,
+    db: StateDB,
+    process_manager: ProcessManager,
+    heartbeat_monitor: HeartbeatMonitor,
+    agent: dict,
+    lead_agent_id: str | None,
+    message_dir: Path | None,
+) -> None:
+    """Resume a suspended agent that has new directives.
+
+    v1.0.0: Resets artifact_status to None before resuming so the agent
+    processes new directives instead of treating its prior success as terminal.
+    """
+    from phalanx.team.orchestrator import resume_single_agent
+
+    agent_id = agent["id"]
+    try:
+        db.update_agent(agent_id, artifact_status=None)
+        resume_single_agent(
+            phalanx_root=phalanx_root,
+            db=db,
+            process_manager=process_manager,
+            heartbeat_monitor=heartbeat_monitor,
+            agent_id=agent_id,
+            auto_approve=True,
+        )
+        _notify_lead(
+            process_manager,
+            lead_agent_id,
+            message_dir,
+            "worker_woken",
+            agent_id,
+            detail="suspended agent woken — post-artifact directives detected",
+        )
+    except Exception as e:
+        logger.error("Failed to wake suspended agent %s: %s", agent_id, e)
+
+
+RATE_LIMIT_BACKOFF_SECONDS = 60
+
+
+def _handle_rate_limit(
+    process_manager: ProcessManager,
+    db: StateDB,
+    team_id: str,
+    agent_id: str,
+    lead_agent_id: str | None,
+    message_dir: Path | None,
+) -> None:
+    """Handle API rate limiting.
+
+    Does NOT immediately restart — logs the event and notifies lead.
+    The Engineering Manager can swap models if the limit persists.
+    """
+    logger.warning("Agent %s hit API rate limit", agent_id)
+    db.log_event(
+        team_id,
+        "rate_limited",
+        agent_id=agent_id,
+    )
+    _notify_lead(
+        process_manager,
+        lead_agent_id,
+        message_dir,
+        "worker_blocked",
+        agent_id,
+        detail=f"rate_limited — backoff {RATE_LIMIT_BACKOFF_SECONDS}s before retry",
+    )

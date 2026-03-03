@@ -48,7 +48,7 @@ When a worker appears stuck:
 
 ## Rules
 - Do NOT write files directly. Use the write-artifact tool only.
-- Do NOT spawn new agents. Report staffing needs as escalation_required.
+- Do NOT spawn new agents. Report staffing needs as escalation.
 - Do NOT stop until all workers are in a terminal state.
 - Do NOT ask the user what to do next. Run autonomously.
 - Your artifact is the ONLY output the main agent reads.
@@ -57,4 +57,4 @@ When a worker appears stuck:
 ## Artifact Statuses
 - "success" — all workers completed, results consolidated
 - "failure" — critical workers failed, task not achievable
-- "escalation_required" — need human or main agent intervention
+- "escalation" — need human or main agent intervention

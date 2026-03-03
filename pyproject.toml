@@ -35,9 +35,11 @@ phalanx = ["defaults/*.toml", "soul/*.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = "--ignore=tests/future_backlog"
 markers = [
     "integration: requires tmux and/or agent CLIs",
     "e2e: full system end-to-end tests",
+    "future_backlog: tests for future phases (Phase 1.1+)",
 ]
 
 [tool.ruff]

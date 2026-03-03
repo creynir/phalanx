@@ -13,7 +13,7 @@ import time
 from contextlib import contextmanager
 from pathlib import Path
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 6
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS teams (
@@ -43,7 +43,9 @@ CREATE TABLE IF NOT EXISTS agents (
     attempts        INTEGER DEFAULT 0,
     max_retries     INTEGER DEFAULT 3,
     prompt_state    TEXT,
-    prompt_screen   TEXT
+    prompt_screen   TEXT,
+    ghost_restart_count INTEGER DEFAULT 0,
+    max_ghost_restarts  INTEGER DEFAULT 5
 );
 
 CREATE TABLE IF NOT EXISTS feed (
@@ -69,6 +71,69 @@ CREATE TABLE IF NOT EXISTS events (
     event_type  TEXT NOT NULL,
     payload     TEXT,
     created_at  REAL NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS token_usage (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    team_id         TEXT NOT NULL,
+    agent_id        TEXT NOT NULL,
+    role            TEXT NOT NULL,
+    backend         TEXT NOT NULL,
+    model           TEXT,
+    input_tokens    INTEGER NOT NULL DEFAULT 0,
+    output_tokens   INTEGER NOT NULL DEFAULT 0,
+    total_tokens    INTEGER NOT NULL DEFAULT 0,
+    estimated_cost  REAL,
+    recorded_at     REAL NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS debt_records (
+    id                  TEXT PRIMARY KEY,
+    team_id             TEXT NOT NULL,
+    skill_run_id        TEXT,
+    step_name           TEXT,
+    agent_id            TEXT NOT NULL,
+    severity            TEXT NOT NULL CHECK(severity IN ('low','medium','high','critical')),
+    category            TEXT NOT NULL CHECK(category IN ('scope_reduction','workaround','deferred_test','deferred_fix')),
+    description         TEXT NOT NULL,
+    proposed_resolution TEXT,
+    created_at          REAL NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS team_context (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    team_id         TEXT NOT NULL,
+    skill_run_id    TEXT,
+    step_name       TEXT,
+    context_type    TEXT NOT NULL CHECK(context_type IN ('convention','pattern','constraint','discovery')),
+    content         TEXT NOT NULL,
+    content_hash    TEXT,
+    source_agent_id TEXT,
+    created_at      REAL NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS skill_runs (
+    id              TEXT PRIMARY KEY,
+    team_id         TEXT NOT NULL,
+    skill_name      TEXT NOT NULL,
+    status          TEXT NOT NULL DEFAULT 'running',
+    dag_json        TEXT,
+    completed_steps TEXT DEFAULT '[]',
+    current_step    TEXT,
+    step_artifacts  TEXT DEFAULT '{}',
+    created_at      REAL NOT NULL,
+    updated_at      REAL NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS engineering_manager_state (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    team_id         TEXT NOT NULL,
+    skill_run_id    TEXT,
+    trigger_source  TEXT NOT NULL CHECK(trigger_source IN ('team_lead_escalation','ghost_loop','rate_limit_storm','human')),
+    decision_json   TEXT,
+    status          TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','applied','rejected','failed')),
+    created_at      REAL NOT NULL,
+    applied_at      REAL
 );
 
 CREATE TABLE IF NOT EXISTS schema_version (
@@ -158,9 +223,109 @@ class StateDB:
                 conn.execute("ALTER TABLE agents DROP COLUMN stall_seconds")
                 conn.execute("ALTER TABLE agents DROP COLUMN max_runtime")
             except Exception:
-                pass  # columns may not exist in fresh DBs
+                pass
+
+        if from_version < 5:
+            self._migrate_to_v5(conn)
+
+        if from_version < 6:
+            self._migrate_to_v6(conn)
 
         conn.execute("UPDATE schema_version SET version = ?", (SCHEMA_VERSION,))
+
+    def _migrate_to_v5(self, conn: sqlite3.Connection) -> None:
+        """v5: Add token_usage, debt_records, team_context, skill_runs tables."""
+        tables = {
+            r[0]
+            for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+        }
+
+        if "token_usage" not in tables:
+            conn.execute(
+                "CREATE TABLE token_usage ("
+                "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                "team_id TEXT NOT NULL, "
+                "agent_id TEXT NOT NULL, "
+                "role TEXT NOT NULL, "
+                "backend TEXT NOT NULL, "
+                "model TEXT, "
+                "input_tokens INTEGER NOT NULL DEFAULT 0, "
+                "output_tokens INTEGER NOT NULL DEFAULT 0, "
+                "total_tokens INTEGER NOT NULL DEFAULT 0, "
+                "estimated_cost REAL, "
+                "recorded_at REAL NOT NULL)"
+            )
+
+        if "debt_records" not in tables:
+            conn.execute(
+                "CREATE TABLE debt_records ("
+                "id TEXT PRIMARY KEY, "
+                "team_id TEXT NOT NULL, "
+                "skill_run_id TEXT, "
+                "step_name TEXT, "
+                "agent_id TEXT NOT NULL, "
+                "severity TEXT NOT NULL CHECK(severity IN ('low','medium','high','critical')), "
+                "category TEXT NOT NULL CHECK(category IN ('scope_reduction','workaround','deferred_test','deferred_fix')), "
+                "description TEXT NOT NULL, "
+                "proposed_resolution TEXT, "
+                "created_at REAL NOT NULL)"
+            )
+
+        if "team_context" not in tables:
+            conn.execute(
+                "CREATE TABLE team_context ("
+                "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                "team_id TEXT NOT NULL, "
+                "skill_run_id TEXT, "
+                "step_name TEXT, "
+                "context_type TEXT NOT NULL CHECK(context_type IN ('convention','pattern','constraint','discovery')), "
+                "content TEXT NOT NULL, "
+                "content_hash TEXT, "
+                "source_agent_id TEXT, "
+                "created_at REAL NOT NULL)"
+            )
+
+        if "skill_runs" not in tables:
+            conn.execute(
+                "CREATE TABLE skill_runs ("
+                "id TEXT PRIMARY KEY, "
+                "team_id TEXT NOT NULL, "
+                "skill_name TEXT NOT NULL, "
+                "status TEXT NOT NULL DEFAULT 'running', "
+                "dag_json TEXT, "
+                "completed_steps TEXT DEFAULT '[]', "
+                "current_step TEXT, "
+                "step_artifacts TEXT DEFAULT '{}', "
+                "created_at REAL NOT NULL, "
+                "updated_at REAL NOT NULL)"
+            )
+
+    def _migrate_to_v6(self, conn: sqlite3.Connection) -> None:
+        """v6: Add ghost_restart_count to agents, engineering manager state table."""
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(agents)").fetchall()}
+        if "ghost_restart_count" not in cols:
+            conn.execute("ALTER TABLE agents ADD COLUMN ghost_restart_count INTEGER DEFAULT 0")
+        if "max_ghost_restarts" not in cols:
+            conn.execute("ALTER TABLE agents ADD COLUMN max_ghost_restarts INTEGER DEFAULT 5")
+
+        tables = {
+            r[0]
+            for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+        }
+        if "engineering_manager_state" not in tables:
+            conn.execute(
+                "CREATE TABLE engineering_manager_state ("
+                "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                "team_id TEXT NOT NULL, "
+                "skill_run_id TEXT, "
+                "trigger_source TEXT NOT NULL CHECK(trigger_source IN "
+                "('team_lead_escalation','ghost_loop','rate_limit_storm','human')), "
+                "decision_json TEXT, "
+                "status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN "
+                "('pending','applied','rejected','failed')), "
+                "created_at REAL NOT NULL, "
+                "applied_at REAL)"
+            )
 
     @contextmanager
     def transaction(self):
@@ -212,6 +377,10 @@ class StateDB:
 
     def delete_team(self, team_id: str) -> None:
         with self.transaction() as conn:
+            conn.execute("DELETE FROM token_usage WHERE team_id = ?", (team_id,))
+            conn.execute("DELETE FROM debt_records WHERE team_id = ?", (team_id,))
+            conn.execute("DELETE FROM team_context WHERE team_id = ?", (team_id,))
+            conn.execute("DELETE FROM skill_runs WHERE team_id = ?", (team_id,))
             conn.execute("DELETE FROM events WHERE team_id = ?", (team_id,))
             conn.execute("DELETE FROM feed WHERE team_id = ?", (team_id,))
             conn.execute("DELETE FROM file_locks WHERE team_id = ?", (team_id,))
@@ -352,4 +521,321 @@ class StateDB:
                 ).fetchall()
             else:
                 rows = conn.execute("SELECT * FROM file_locks").fetchall()
+            return [dict(r) for r in rows]
+
+    # -- Token Usage (v1.0.0) --
+
+    def record_token_usage(
+        self,
+        team_id: str,
+        agent_id: str,
+        role: str,
+        backend: str,
+        model: str | None = None,
+        input_tokens: int = 0,
+        output_tokens: int = 0,
+        estimated_cost: float | None = None,
+    ) -> None:
+        total = input_tokens + output_tokens
+        with self.transaction() as conn:
+            conn.execute(
+                "INSERT INTO token_usage "
+                "(team_id, agent_id, role, backend, model, input_tokens, "
+                " output_tokens, total_tokens, estimated_cost, recorded_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    team_id,
+                    agent_id,
+                    role,
+                    backend,
+                    model,
+                    input_tokens,
+                    output_tokens,
+                    total,
+                    estimated_cost,
+                    time.time(),
+                ),
+            )
+
+    def get_team_token_usage(self, team_id: str) -> list[dict]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM token_usage WHERE team_id = ? ORDER BY recorded_at",
+                (team_id,),
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    def get_agent_token_usage(self, agent_id: str) -> list[dict]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM token_usage WHERE agent_id = ? ORDER BY recorded_at",
+                (agent_id,),
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    # -- Debt Records (v1.0.0) --
+
+    def create_debt_record(
+        self,
+        debt_id: str,
+        team_id: str,
+        agent_id: str,
+        severity: str,
+        category: str,
+        description: str,
+        skill_run_id: str | None = None,
+        step_name: str | None = None,
+        proposed_resolution: str | None = None,
+    ) -> None:
+        with self.transaction() as conn:
+            conn.execute(
+                "INSERT INTO debt_records "
+                "(id, team_id, skill_run_id, step_name, agent_id, severity, "
+                " category, description, proposed_resolution, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    debt_id,
+                    team_id,
+                    skill_run_id,
+                    step_name,
+                    agent_id,
+                    severity,
+                    category,
+                    description,
+                    proposed_resolution,
+                    time.time(),
+                ),
+            )
+
+    def get_team_debt(self, team_id: str) -> list[dict]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM debt_records WHERE team_id = ? ORDER BY created_at",
+                (team_id,),
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    # -- Team Context / Continual Learning (v1.0.0) --
+
+    def add_team_context(
+        self,
+        team_id: str,
+        context_type: str,
+        content: str,
+        content_hash: str | None = None,
+        skill_run_id: str | None = None,
+        step_name: str | None = None,
+        source_agent_id: str | None = None,
+    ) -> int | None:
+        if content_hash:
+            with self._connect() as conn:
+                existing = conn.execute(
+                    "SELECT id FROM team_context WHERE team_id = ? AND content_hash = ?",
+                    (team_id, content_hash),
+                ).fetchone()
+                if existing:
+                    return None  # deduplicate
+        with self.transaction() as conn:
+            cursor = conn.execute(
+                "INSERT INTO team_context "
+                "(team_id, skill_run_id, step_name, context_type, content, "
+                " content_hash, source_agent_id, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    team_id,
+                    skill_run_id,
+                    step_name,
+                    context_type,
+                    content,
+                    content_hash,
+                    source_agent_id,
+                    time.time(),
+                ),
+            )
+            return cursor.lastrowid
+
+    def get_team_context(self, team_id: str, limit: int = 100) -> list[dict]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM team_context WHERE team_id = ? ORDER BY created_at DESC LIMIT ?",
+                (team_id, limit),
+            ).fetchall()
+            return [dict(r) for r in reversed(rows)]
+
+    def clear_team_context(self, team_id: str) -> None:
+        with self.transaction() as conn:
+            conn.execute("DELETE FROM team_context WHERE team_id = ?", (team_id,))
+
+    # -- Skill Runs / Checkpoints (v1.0.0) --
+
+    def create_skill_run(
+        self,
+        run_id: str,
+        team_id: str,
+        skill_name: str,
+        dag_json: str | None = None,
+    ) -> None:
+        now = time.time()
+        with self.transaction() as conn:
+            conn.execute(
+                "INSERT INTO skill_runs "
+                "(id, team_id, skill_name, status, dag_json, created_at, updated_at) "
+                "VALUES (?, ?, ?, 'running', ?, ?, ?)",
+                (run_id, team_id, skill_name, dag_json, now, now),
+            )
+
+    def get_skill_run(self, run_id: str) -> dict | None:
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM skill_runs WHERE id = ?", (run_id,)).fetchone()
+            return dict(row) if row else None
+
+    def update_skill_run(self, run_id: str, **kwargs) -> None:
+        kwargs["updated_at"] = time.time()
+        set_clause = ", ".join(f"{k} = ?" for k in kwargs)
+        values = list(kwargs.values()) + [run_id]
+        with self.transaction() as conn:
+            conn.execute(
+                f"UPDATE skill_runs SET {set_clause} WHERE id = ?",
+                values,
+            )
+
+    def save_checkpoint(
+        self,
+        run_id: str,
+        step_name: str,
+        step_result: str | None = None,
+    ) -> None:
+        """Mark a step as completed in a skill run and optionally save its artifact."""
+        run = self.get_skill_run(run_id)
+        if run is None:
+            return
+
+        completed = json.loads(run.get("completed_steps") or "[]")
+        if step_name not in completed:
+            completed.append(step_name)
+
+        artifacts = json.loads(run.get("step_artifacts") or "{}")
+        if step_result is not None:
+            artifacts[step_name] = step_result
+
+        self.update_skill_run(
+            run_id,
+            completed_steps=json.dumps(completed),
+            step_artifacts=json.dumps(artifacts),
+            current_step=None,
+        )
+
+    def load_checkpoint(self, run_id: str) -> dict | None:
+        """Load checkpoint state for a skill run.
+
+        Returns dict with completed_steps list and step_artifacts map,
+        or None if the run doesn't exist.
+        """
+        run = self.get_skill_run(run_id)
+        if run is None:
+            return None
+        return {
+            "run_id": run_id,
+            "status": run["status"],
+            "completed_steps": json.loads(run.get("completed_steps") or "[]"),
+            "current_step": run.get("current_step"),
+            "step_artifacts": json.loads(run.get("step_artifacts") or "{}"),
+        }
+
+    def get_active_skill_run(self, team_id: str) -> dict | None:
+        """Return the most recent 'running' skill run for a team, or None."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM skill_runs WHERE team_id = ? AND status = 'running' "
+                "ORDER BY created_at DESC LIMIT 1",
+                (team_id,),
+            ).fetchone()
+            return dict(row) if row else None
+
+    def list_skill_runs(self, team_id: str, limit: int = 5) -> list[dict]:
+        """Return the most recent skill runs for a team, newest first."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM skill_runs WHERE team_id = ? ORDER BY created_at DESC LIMIT ?",
+                (team_id, limit),
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    def get_recent_events(self, team_id: str, limit: int = 30) -> list[dict]:
+        """Return the most recent events for a team, newest first."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT event_type, agent_id, payload, created_at FROM events "
+                "WHERE team_id = ? ORDER BY created_at DESC LIMIT ?",
+                (team_id, limit),
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    # -- Ghost Restart Tracking (v1.0.0) --
+
+    def increment_ghost_restart(self, agent_id: str) -> int:
+        """Increment ghost_restart_count and return the new value.
+
+        Used by the team monitor to track ghost session restart loops.
+        When the count exceeds max_ghost_restarts, the agent is escalated
+        to the Outer Loop instead of being restarted again.
+        """
+        agent = self.get_agent(agent_id)
+        if agent is None:
+            return 0
+        new_count = (agent.get("ghost_restart_count") or 0) + 1
+        self.update_agent(agent_id, ghost_restart_count=new_count)
+        return new_count
+
+    def reset_ghost_restart_count(self, agent_id: str) -> None:
+        """Reset ghost restart counter after successful recovery."""
+        self.update_agent(agent_id, ghost_restart_count=0)
+
+    def get_ghost_restart_limit(self, agent_id: str) -> int:
+        """Return the max ghost restarts before Outer Loop escalation."""
+        agent = self.get_agent(agent_id)
+        if agent is None:
+            return 5
+        return agent.get("max_ghost_restarts") or 5
+
+    # -- Engineering Manager State (v1.0.0) --
+
+    def create_engineering_manager_entry(
+        self,
+        team_id: str,
+        trigger_source: str,
+        decision_json: str | None = None,
+        skill_run_id: str | None = None,
+    ) -> int:
+        """Record an engineering manager activation. Returns the entry id."""
+        now = time.time()
+        with self.transaction() as conn:
+            cursor = conn.execute(
+                "INSERT INTO engineering_manager_state "
+                "(team_id, skill_run_id, trigger_source, decision_json, status, created_at) "
+                "VALUES (?, ?, ?, ?, 'pending', ?)",
+                (team_id, skill_run_id, trigger_source, decision_json, now),
+            )
+            return cursor.lastrowid
+
+    def update_engineering_manager_entry(self, entry_id: int, **kwargs) -> None:
+        """Update an engineering manager state entry (e.g., mark applied/rejected)."""
+        if "status" in kwargs and kwargs["status"] == "applied":
+            kwargs["applied_at"] = time.time()
+        set_clause = ", ".join(f"{k} = ?" for k in kwargs)
+        values = list(kwargs.values()) + [entry_id]
+        with self.transaction() as conn:
+            conn.execute(
+                f"UPDATE engineering_manager_state SET {set_clause} WHERE id = ?",
+                values,
+            )
+
+    def get_engineering_manager_history(self, team_id: str, limit: int = 20) -> list[dict]:
+        """Get engineering manager activation history for a team."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM engineering_manager_state WHERE team_id = ? "
+                "ORDER BY created_at DESC LIMIT ?",
+                (team_id, limit),
+            ).fetchall()
             return [dict(r) for r in rows]

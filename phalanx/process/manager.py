@@ -79,19 +79,28 @@ class AgentProcess:
 
     @property
     def pane(self) -> libtmux.Pane | None:
-        if self._session is None:
-            return None
         try:
-            return self._session.active_window.active_pane
+            server = libtmux.Server()
+            session = server.sessions.get(session_name=self.session_name)
+            if session:
+                return session.active_window.active_pane
+            return None
         except Exception:
             return None
+
+    # Shells that indicate the agent binary has exited and tmux fell
+    # back to an interactive prompt (a "ghost session").
+    _GHOST_SHELLS = frozenset({"zsh", "bash", "sh", "fish", "dash", "csh", "tcsh", "ksh"})
 
     def is_alive(self) -> bool:
         """Check if the agent process is alive inside its tmux session.
 
-        Returns False if the tmux session is gone OR if the foreground process
-        has fallen back to a shell (zsh/bash), which means the agent binary
-        crashed or exited.
+        Returns False if:
+        - The tmux session no longer exists.
+        - The pane's current command is a bare shell (zsh, bash, etc.),
+          which means the agent binary crashed or exited and the session
+          fell back to an interactive shell prompt ("ghost session").
+        - The pane screen shows shell error spam (corroborated ghost check).
         """
         try:
             server = libtmux.Server()
@@ -103,14 +112,59 @@ class AgentProcess:
             pane = session.active_window.active_pane
             if pane is None:
                 return False
-            current_cmd = pane.pane_current_command or ""
-            shell_names = {"zsh", "bash", "sh", "fish", "dash"}
-            if current_cmd.lower() in shell_names:
+        except Exception:
+            return False
+
+        try:
+            current_cmd = pane.pane_current_command
+            if current_cmd and current_cmd.strip().split("/")[-1] in self._GHOST_SHELLS:
+                return False
+        except Exception:
+            pass
+
+        try:
+            screen = pane.capture_pane()
+            if screen and self._screen_shows_ghost(screen):
                 return False
         except Exception:
             pass
 
         return True
+
+    @staticmethod
+    def _screen_shows_ghost(lines: list[str]) -> bool:
+        """Corroborate ghost detection via screen content.
+
+        Returns True if the screen shows patterns consistent with the
+        agent binary having exited: multiple shell errors, or a bare
+        shell prompt with no TUI chrome.
+        """
+        import re
+
+        if not lines:
+            return False
+        tail = "\n".join(lines[-12:])
+
+        shell_error_count = len(
+            re.findall(
+                r"zsh:|bash:|sh:|command not found|parse error|no such file",
+                tail,
+                re.IGNORECASE,
+            )
+        )
+        if shell_error_count >= 2:
+            return True
+
+        last_lines = [ln.strip() for ln in lines[-4:] if ln.strip()]
+        if last_lines:
+            last = last_lines[-1]
+            tui_indicators = ("❯", "? for shortcuts", "→ Add a follow-up", "/ commands · @")
+            if any(ind in last for ind in tui_indicators):
+                return False
+            if re.match(r"^[\w@.~/ ()-]*[$%#>]\s*$", last):
+                return True
+
+        return False
 
 
 class ProcessManager:

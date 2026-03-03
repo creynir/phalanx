@@ -146,24 +146,23 @@ def _write_task_file(
     return task_file
 
 
+_SOUL_FILE_MAP = {
+    "lead": "team_lead.md",
+    "engineering_manager": "engineering_manager.md",
+}
+
+
 def _resolve_soul_file(phalanx_root: Path, role: str) -> Path | None:
     """Find the appropriate soul file for the role."""
-    soul_dir = phalanx_root / "soul"
-    if role == "lead":
-        path = soul_dir / "team_lead.md"
-    else:
-        path = soul_dir / "worker.md"
+    filename = _SOUL_FILE_MAP.get(role, "worker.md")
 
+    soul_dir = phalanx_root / "soul"
+    path = soul_dir / filename
     if path.exists():
         return path
 
-    # Try bundled soul files
     bundled = Path(__file__).parent.parent / "soul"
-    if role == "lead":
-        bundled_path = bundled / "team_lead.md"
-    else:
-        bundled_path = bundled / "worker.md"
-
+    bundled_path = bundled / filename
     if bundled_path.exists():
         return bundled_path
 

@@ -184,8 +184,11 @@ def _launch_agent(
 @click.option(
     "--max-runtime", type=int, default=None, help="Max runtime in seconds (default: 1800)"
 )
+@click.option("--worktree", is_flag=True, help="Create a git worktree for the team")
 @click.pass_context
-def create_team_cmd(ctx, task, config_path, agents, backend, model, idle_timeout, max_runtime):
+def create_team_cmd(
+    ctx, task, config_path, agents, backend, model, idle_timeout, max_runtime, worktree=False
+):
     """Create a team with per-agent prompts (--config) or simple shared task."""
     from phalanx.monitor.heartbeat import HeartbeatMonitor
     from phalanx.process.manager import ProcessManager
@@ -245,6 +248,7 @@ def create_team_cmd(ctx, task, config_path, agents, backend, model, idle_timeout
             config=phalanx_config,
             idle_timeout=effective_idle,
             max_runtime=effective_max_runtime,
+            worktree=worktree,
         )
         result = {"ok": True, "team_id": team_id, "lead_id": lead_id}
 
@@ -446,6 +450,63 @@ def agent_result_cmd(ctx, agent_id, team_id):
         click.echo(f"No artifact found for agent '{agent_id}'", err=True)
         raise SystemExit(1)
     _json_output(result)
+
+
+# ── team-costs / team-debt ───────────────────────────────────────────
+
+
+@cli.command("team-costs")
+@click.argument("team_id")
+@click.pass_context
+def team_costs_cmd(ctx, team_id):
+    """Show token usage and estimated cost breakdown for a team."""
+    from phalanx.costs.aggregator import CostAggregator
+
+    root = _get_root(ctx)
+    phalanx_config = _get_config(root)
+    db = _get_db(root)
+
+    cost_table = getattr(phalanx_config, "cost_table", None)
+    aggregator = CostAggregator(db, cost_table=cost_table)
+    breakdown = aggregator.get_team_costs(team_id)
+
+    if ctx.obj.get("json_mode"):
+        _json_output(breakdown.to_dict())
+    else:
+        click.echo(f"Team {team_id} Cost Breakdown:")
+        click.echo(f"  Total tokens: {breakdown.total_tokens}")
+        click.echo(f"  Input tokens: {breakdown.total_input_tokens}")
+        click.echo(f"  Output tokens: {breakdown.total_output_tokens}")
+        if breakdown.total_estimated_cost is not None:
+            click.echo(f"  Estimated cost: ${breakdown.total_estimated_cost:.4f}")
+        else:
+            click.echo("  Estimated cost: N/A")
+        if breakdown.by_role:
+            click.echo("  By role:")
+            for role, data in breakdown.by_role.items():
+                click.echo(
+                    f"    {role}: {data['input_tokens']}in/{data['output_tokens']}out ${data.get('cost', 0):.4f}"
+                )
+
+
+@cli.command("team-debt")
+@click.argument("team_id")
+@click.pass_context
+def team_debt_cmd(ctx, team_id):
+    """Show typed debt/compromise records for a team."""
+    root = _get_root(ctx)
+    db = _get_db(root)
+    records = db.get_team_debt(team_id)
+
+    if ctx.obj.get("json_mode"):
+        _json_output({"team_id": team_id, "debt_records": records, "count": len(records)})
+    else:
+        if not records:
+            click.echo(f"No debt records for team {team_id}")
+        else:
+            click.echo(f"Team {team_id} Debt Records ({len(records)}):")
+            for r in records:
+                click.echo(f"  [{r['severity'].upper()}] {r['category']}: {r['description'][:80]}")
 
 
 # ── message / message-agent / broadcast ─────────────────────────────
@@ -779,14 +840,13 @@ def stop_agent_cmd(ctx, agent_id):
 
 
 @cli.command("write-artifact")
-@click.option(
-    "--status", required=True, type=click.Choice(["success", "failure", "escalation_required"])
-)
+@click.option("--status", required=True, type=click.Choice(["success", "failure", "escalation"]))
 @click.option("--output", required=True, help="JSON output data")
 @click.option("--warnings", default="[]", help="JSON array of warning strings")
+@click.option("--debt", "debt_json", default="[]", help="JSON array of DebtRecord objects")
 @click.option("--json", "json_flag", is_flag=True, help="Output is JSON format")
 @click.pass_context
-def write_artifact_cmd(ctx, status, output, warnings, json_flag):
+def write_artifact_cmd(ctx, status, output, warnings, debt_json, json_flag):
     """Write a structured artifact (used by worker agents)."""
     from phalanx.artifacts.schema import Artifact
     from phalanx.artifacts.writer import write_artifact
@@ -820,10 +880,16 @@ def write_artifact_cmd(ctx, status, output, warnings, json_flag):
     except json.JSONDecodeError:
         warnings_list = []
 
+    try:
+        debt_list = json.loads(debt_json)
+    except json.JSONDecodeError:
+        debt_list = []
+
     artifact = Artifact(
         status=status,
         output=output_data,
         warnings=warnings_list,
+        debt=debt_list,
         agent_id=agent_id,
         team_id=team_id,
     )

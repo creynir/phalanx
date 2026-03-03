@@ -25,4 +25,4 @@
 ## Artifact Statuses
 - "success" — task completed successfully
 - "failure" — task could not be completed
-- "escalation_required" — need human or team lead intervention
+- "escalation" — need human or team lead intervention

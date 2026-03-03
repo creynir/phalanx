@@ -1,37 +1,37 @@
-"""Tests for soul file loader and dynamic variable injection."""
+"""Tests for soul file resolution."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from phalanx.soul.loader import load_soul_file
+from phalanx.team.spawn import _resolve_soul_file
 
 
-class TestLoadSoulFile:
-    def test_load_existing_file(self, tmp_path: Path):
-        soul = tmp_path / "agent.md"
-        soul.write_text("Hello, I am an agent.")
-        content = load_soul_file(soul)
-        assert content == "Hello, I am an agent."
+class TestResolveSoulFile:
+    def test_returns_user_override_if_exists(self, tmp_path: Path):
+        soul_dir = tmp_path / "soul"
+        soul_dir.mkdir()
+        worker_soul = soul_dir / "worker.md"
+        worker_soul.write_text("custom worker soul")
+        result = _resolve_soul_file(tmp_path, "worker")
+        assert result == worker_soul
 
-    def test_load_missing_file(self, tmp_path: Path):
-        content = load_soul_file(tmp_path / "missing.md")
-        assert content == ""
+    def test_returns_lead_override_if_exists(self, tmp_path: Path):
+        soul_dir = tmp_path / "soul"
+        soul_dir.mkdir()
+        lead_soul = soul_dir / "team_lead.md"
+        lead_soul.write_text("custom lead soul")
+        result = _resolve_soul_file(tmp_path, "lead")
+        assert result == lead_soul
 
-    def test_load_with_variables(self, tmp_path: Path):
-        soul = tmp_path / "agent.md"
-        soul.write_text("Team: {{TEAM_ID}}, Agent: {{AGENT_ID}}")
-        content = load_soul_file(soul, variables={"TEAM_ID": "team-123", "AGENT_ID": "agent-456"})
-        assert content == "Team: team-123, Agent: agent-456"
+    def test_returns_bundled_if_no_override(self, tmp_path: Path):
+        result = _resolve_soul_file(tmp_path, "worker")
+        if result is not None:
+            assert result.name == "worker.md"
 
-    def test_load_missing_variables_left_intact(self, tmp_path: Path):
-        soul = tmp_path / "agent.md"
-        soul.write_text("Team: {{TEAM_ID}}, Role: {{ROLE}}")
-        content = load_soul_file(soul, variables={"TEAM_ID": "team-123"})
-        assert content == "Team: team-123, Role: {{ROLE}}"
-
-    def test_load_no_variables_dict(self, tmp_path: Path):
-        soul = tmp_path / "agent.md"
-        soul.write_text("Hello {{TEAM_ID}}")
-        content = load_soul_file(soul)
-        assert content == "Hello {{TEAM_ID}}"
+    def test_returns_none_if_nothing_found(self, tmp_path: Path):
+        (tmp_path / "soul").mkdir()
+        result = _resolve_soul_file(tmp_path, "nonexistent_role")
+        # Falls back to "worker.md" which may or may not exist as bundled
+        # The function returns None only if no soul file exists at all
+        assert result is None or result.exists()

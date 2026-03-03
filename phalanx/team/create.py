@@ -129,6 +129,7 @@ def create_team(
     config: PhalanxConfig | None = None,
     idle_timeout: int = 1800,
     max_runtime: int = 1800,
+    worktree: bool = False,
 ) -> tuple[str, str]:
     """Create a team using the simple --task + --agents spec.
 
@@ -151,6 +152,7 @@ def create_team(
         for _ in range(count):
             worker_id = f"w{worker_index}-{role}-{uuid.uuid4().hex[:8]}"
             resolved_model = resolve_model(backend_name, role, model)
+            worker_worktree = f".phalanx/worktrees/{team_id}/{worker_id}" if worktree else None
             spawn_agent(
                 phalanx_root=phalanx_root,
                 db=db,
@@ -164,10 +166,12 @@ def create_team(
                 model=resolved_model,
                 auto_approve=auto_approve,
                 config=config,
+                worktree=worker_worktree,
             )
             worker_index += 1
 
     lead_model = resolve_model(backend_name, "lead", model)
+    lead_worktree = f".phalanx/worktrees/{team_id}/{lead_id}" if worktree else None
     spawn_agent(
         phalanx_root=phalanx_root,
         db=db,
@@ -181,6 +185,7 @@ def create_team(
         model=lead_model,
         auto_approve=auto_approve,
         config=config,
+        worktree=lead_worktree,
     )
 
     _spawn_team_monitor(phalanx_root, team_id, idle_timeout=idle_timeout, max_runtime=max_runtime)

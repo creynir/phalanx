@@ -7,6 +7,7 @@ import logging
 from pathlib import Path
 
 from phalanx.artifacts.reader import read_agent_artifact, read_team_artifact
+from phalanx.artifacts.schema import Artifact
 from phalanx.db import StateDB
 from phalanx.monitor.heartbeat import HeartbeatMonitor
 from phalanx.process.manager import ProcessManager
@@ -37,22 +38,42 @@ def _build_resume_prompt(
     """
     team_id = agent["team_id"]
     agent_id = agent["id"]
-    is_lead = agent["role"] == "lead"
+    role = agent["role"]
     original_task = agent.get("task", "")
 
-    # Load soul template
     soul_dir = Path(__file__).parent.parent / "soul"
-    soul_file = soul_dir / ("team_lead.md" if is_lead else "worker.md")
+    soul_map = {
+        "lead": "team_lead.md",
+        "worker": "worker.md",
+        "engineering_manager": "engineering_manager.md",
+    }
+    soul_file = soul_dir / soul_map.get(role, "worker.md")
+
+    # Fallback: check user-overridable soul dir
+    user_soul_dir = phalanx_root / "soul"
+    user_soul_file = user_soul_dir / soul_map.get(role, "worker.md")
+    if user_soul_file.exists():
+        soul_file = user_soul_file
+
     soul_content = ""
     if soul_file.exists():
         soul_content = soul_file.read_text(encoding="utf-8")
 
-    # Gather team state
     all_agents = db.list_agents(team_id)
 
-    if is_lead:
+    if role == "lead":
         return _build_lead_resume(
             phalanx_root,
+            team_id,
+            agent_id,
+            original_task,
+            soul_content,
+            all_agents,
+        )
+    elif role == "engineering_manager":
+        return _build_engineering_manager_resume(
+            phalanx_root,
+            db,
             team_id,
             agent_id,
             original_task,
@@ -67,6 +88,7 @@ def _build_resume_prompt(
             original_task,
             soul_content,
             all_agents,
+            db=db,
         )
 
 
@@ -181,17 +203,24 @@ def _build_worker_resume(
     original_task: str,
     soul_content: str,
     all_agents: list[dict],
+    db: "StateDB | None" = None,
 ) -> str:
-    """Build resume prompt for a worker agent."""
+    """Build resume prompt for a worker agent.
+
+    v1.0.0: If post-artifact feed messages exist (timestamps after the
+    artifact's created_at), the agent is instructed to process the new
+    directives instead of waiting idle.
+    """
     prompt = soul_content
     if "{task}" in prompt:
         prompt = prompt.replace("{task}", original_task)
 
-    # Check if this worker already produced an artifact
     art = read_agent_artifact(phalanx_root, team_id, agent_id)
 
     resume_ctx = "\n\n---\n\n## RESUME CONTEXT — You are being resumed\n\n"
     resume_ctx += "You were previously running and were suspended. You are now being restarted.\n\n"
+
+    post_artifact_directives = _get_post_artifact_feed(db, team_id, art)
 
     if art:
         output = art.output
@@ -204,11 +233,24 @@ def _build_worker_resume(
             "### Your Previous Artifact\n"
             f"You already completed your original task and wrote this artifact:\n"
             f"```json\n{json.dumps(output, indent=2, ensure_ascii=False)}\n```\n\n"
-            "**Do NOT redo this work.** Wait for a message from the team lead "
-            "with your new assignment. Check for pending messages by reading "
-            "any files referenced in prompts. If no new task arrives within "
-            "30 seconds, run `phalanx feed` to check the team feed.\n"
         )
+
+        if post_artifact_directives:
+            resume_ctx += (
+                "### NEW DIRECTIVES (Posted After Your Artifact)\n"
+                "The following messages were posted to the team feed AFTER "
+                "your artifact. Process these new directives and update your "
+                "work accordingly. You may overwrite your previous artifact.\n\n"
+            )
+            for i, msg in enumerate(post_artifact_directives, 1):
+                resume_ctx += f"**Directive {i}** (from {msg['sender_id']}):\n{msg['content']}\n\n"
+        else:
+            resume_ctx += (
+                "**Do NOT redo this work.** Wait for a message from the team lead "
+                "with your new assignment. Check for pending messages by reading "
+                "any files referenced in prompts. If no new task arrives within "
+                "30 seconds, run `phalanx feed` to check the team feed.\n"
+            )
     else:
         resume_ctx += (
             "You did not complete your previous task. Pick up where you left off and complete it.\n"
@@ -216,6 +258,135 @@ def _build_worker_resume(
 
     merged = f"Execute the following task immediately without summarising or asking questions:\n\n{prompt}{resume_ctx}"
     return merged
+
+
+def _build_engineering_manager_resume(
+    phalanx_root: Path,
+    db: StateDB,
+    team_id: str,
+    agent_id: str,
+    original_task: str,
+    soul_content: str,
+    all_agents: list[dict],
+) -> str:
+    """Build resume prompt for an engineering manager (outer loop) agent.
+
+    Injects full team state, all artifacts, event log summary,
+    the escalation context, and DAG state.
+    """
+    prompt = soul_content
+    if "{task}" in prompt:
+        prompt = prompt.replace("{task}", original_task)
+
+    resume_ctx = "\n\n---\n\n## RESUME CONTEXT — Engineering Manager Activation\n\n"
+    resume_ctx += (
+        "You are being activated because the Middle Loop could not resolve "
+        "a systemic issue. Analyze the state below and emit an EngineeringManagerDecision.\n\n"
+    )
+
+    resume_ctx += f"**Team ID:** {team_id}\n\n"
+
+    # Full agent state
+    resume_ctx += "### All Agent Statuses\n"
+    for a in all_agents:
+        line = f"- {a['id']} (role={a['role']}, status={a['status']}"
+        line += f", backend={a.get('backend', '?')}, model={a.get('model', '?')}"
+        line += f", attempts={a.get('attempts', 0)}"
+        art = read_agent_artifact(phalanx_root, team_id, a["id"])
+        if art:
+            line += f", artifact={art.status}"
+        else:
+            line += ", artifact=none"
+        line += ")"
+        resume_ctx += line + "\n"
+
+    # All artifacts
+    resume_ctx += "\n### Agent Artifacts\n"
+    for a in all_agents:
+        art = read_agent_artifact(phalanx_root, team_id, a["id"])
+        if art:
+            output = art.output
+            if isinstance(output, str):
+                try:
+                    output = json.loads(output)
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            resume_ctx += (
+                f"#### {a['id']} ({a['role']}, artifact={art.status})\n"
+                f"```json\n{json.dumps(output, indent=2, ensure_ascii=False)[:3000]}\n```\n\n"
+            )
+
+    # Event log summary
+    try:
+        events = db.get_recent_events(team_id, limit=30)
+        if events:
+            resume_ctx += "### Recent Events (newest first)\n"
+            for r in events:
+                resume_ctx += (
+                    f"- {r['event_type']}"
+                    f" agent={r.get('agent_id', 'N/A')}"
+                    f" payload={r.get('payload', '')}\n"
+                )
+            resume_ctx += "\n"
+    except Exception:
+        pass
+
+    # Escalation context from feed
+    try:
+        recent_feed = db.get_feed(team_id, limit=20)
+        escalation_msgs = [
+            m
+            for m in recent_feed
+            if "[ESCALATION]" in m.get("content", "")
+            or "escalation" in m.get("content", "").lower()
+        ]
+        if escalation_msgs:
+            resume_ctx += "### Escalation Messages\n"
+            for m in escalation_msgs:
+                resume_ctx += f"- From {m['sender_id']}: {m['content']}\n"
+            resume_ctx += "\n"
+    except Exception:
+        pass
+
+    # DAG state from skill_runs
+    try:
+        runs = db.list_skill_runs(team_id, limit=5)
+        if runs:
+            resume_ctx += "### Skill Run State\n"
+            for r in runs:
+                resume_ctx += (
+                    f"- Run {r['id']}: skill={r['skill_name']}, status={r['status']}, "
+                    f"completed={r.get('completed_steps', '[]')}, "
+                    f"current={r.get('current_step', 'none')}\n"
+                )
+            resume_ctx += "\n"
+    except Exception:
+        pass
+
+    resume_ctx += (
+        "### Instructions\n"
+        "1. Analyze the team state, event log, and escalation context above.\n"
+        "2. Identify the root cause of the issue.\n"
+        "3. Select the least disruptive action that resolves the problem.\n"
+        "4. Write your artifact with the EngineeringManagerDecision JSON.\n"
+    )
+
+    merged = f"Execute the following task immediately without summarising or asking questions:\n\n{prompt}{resume_ctx}"
+    return merged
+
+
+def _get_post_artifact_feed(
+    db: "StateDB | None",
+    team_id: str,
+    artifact: "Artifact | None",
+) -> list[dict]:
+    """Return feed messages posted after the artifact's created_at timestamp."""
+    if db is None or artifact is None:
+        return []
+    try:
+        return db.get_feed(team_id, limit=50, since=artifact.created_at)
+    except Exception:
+        return []
 
 
 def get_team_status(db: StateDB, team_id: str) -> dict | None:

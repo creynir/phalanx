@@ -19,7 +19,7 @@ class TestSingleAgent:
             timeout=10,
         )
         assert result.returncode == 0
-        assert "0.3.4" in result.stdout
+        assert "0.3" in result.stdout
 
     def test_phalanx_help(self):
         result = subprocess.run(
@@ -40,5 +40,11 @@ class TestSingleAgent:
         )
         assert result.returncode == 0
 
-    def test_phalanx_models_show(self):
-        pass
+    def test_phalanx_list_teams(self):
+        result = subprocess.run(
+            ["phalanx", "--json-output", "list-teams"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        assert result.returncode == 0

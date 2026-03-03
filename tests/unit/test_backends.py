@@ -14,7 +14,7 @@ from phalanx.backends.registry import (
     get_backend,
     list_backends,
 )
-from phalanx.backends.model_router import resolve_model
+from phalanx.team.config import resolve_model
 
 
 WS = Path("/tmp/workspace")
@@ -181,33 +181,19 @@ class TestRegistry:
 
 
 class TestModelRouter:
-    def test_resolve_known_role(self):
-        cfg = {"models": {"cursor": {"coder": "opus-4.6", "default": "gemini-3.1-pro"}}}
-        assert resolve_model("cursor", "coder", cfg) == "opus-4.6"
+    def test_resolve_with_explicit_model(self):
+        assert resolve_model("cursor", "coder", "opus-4.6") == "opus-4.6"
 
-    def test_resolve_falls_back_to_default(self):
-        cfg = {"models": {"cursor": {"default": "gemini-3.1-pro"}}}
-        assert resolve_model("cursor", "researcher", cfg) == "gemini-3.1-pro"
+    def test_resolve_falls_back_to_role_default(self):
+        model = resolve_model("cursor", "architect")
+        assert model == "opus-4.6"
 
-    def test_resolve_missing_backend_raises(self):
-        with pytest.raises(KeyError):
-            resolve_model("nonexistent", "coder", {"models": {}})
+    def test_resolve_falls_back_to_backend_default(self):
+        model = resolve_model("cursor", "unknown_role")
+        assert model == "sonnet-4.6"
 
-    def test_all_shipped_backends(self, tmp_path):
-        from phalanx.config import load_config
-
-        load_config(tmp_path)
-        # load_config loads into PhalanxConfig which might not have 'models' in its base definition
-        # let's mock the config dict structure since load_config doesn't return the raw dict
-        mock_cfg_dict = {
-            "models": {
-                "cursor": {"default": "claude-sonnet-4-20250514"},
-                "claude": {"default": "claude-3-5-sonnet-20241022"},
-                "gemini": {"default": "gemini-2.5-pro"},
-                "codex": {"default": "o3"},
-            }
-        }
+    def test_all_shipped_backends(self):
         for backend_name in ["cursor", "claude", "gemini", "codex"]:
-            model = resolve_model(backend_name, "default", mock_cfg_dict)
+            model = resolve_model(backend_name, "coder")
             assert isinstance(model, str)
             assert len(model) > 0

@@ -1,16 +1,17 @@
-"""Message delivery to agents via tmux send-keys.
+"""Message delivery to agents via file-based injection.
 
-Push-only delivery: messages are sent immediately via send-keys.
-The terminal input buffer queues them until the agent's next input read.
-No Ctrl+C interrupt — the agent picks up the message naturally.
+v1.0.0: ALL message delivery uses file-based injection to eliminate
+prompt injection vulnerabilities from tmux send-keys. Only single
+characters (e.g. 'y', 'a' for prompt resolution) use raw send-keys.
 
-Long messages (>500 chars) are written to a temp file and the agent
-is told to read that file instead.
+The message content is written to a temp file and only the file path
+is injected into the TUI via send-keys.
 """
 
 from __future__ import annotations
 
 import logging
+import re
 from pathlib import Path
 
 from phalanx.process.manager import ProcessManager
@@ -19,6 +20,21 @@ logger = logging.getLogger(__name__)
 
 LONG_MESSAGE_THRESHOLD = 500
 
+_POISON_PILL_PATTERNS = re.compile(
+    r"escalation_required|"
+    r"\\x[0-9a-fA-F]{2}|"
+    r"[\x00-\x08\x0b\x0c\x0e-\x1f]",
+)
+
+
+def sanitize_for_send_keys(text: str) -> str:
+    """Sanitize text before injection via send_keys.
+
+    Strips known TUI-crashing patterns and non-printable control characters.
+    Only used for short delivery hints — actual content goes via files.
+    """
+    return _POISON_PILL_PATTERNS.sub("", text)
+
 
 def deliver_message(
     process_manager: ProcessManager,
@@ -26,7 +42,7 @@ def deliver_message(
     message: str,
     message_dir: Path | None = None,
 ) -> bool:
-    """Deliver a message to an agent's tmux pane via send-keys.
+    """Deliver a message to an agent's tmux pane via file-based injection.
 
     Always delivers via file to avoid shell injection from message content.
     """
@@ -67,7 +83,10 @@ def _deliver_via_file(
     message: str,
     message_dir: Path | None = None,
 ) -> bool:
-    """Write message to a file and tell the agent to read it."""
+    """Write message to a file and tell the agent to read it.
+
+    The only text sent via send_keys is the sanitized file path reference.
+    """
     if message_dir is None:
         import tempfile
 
@@ -77,5 +96,5 @@ def _deliver_via_file(
     msg_file = message_dir / f"msg_{agent_id}_{hash(message) & 0xFFFFFFFF:08x}.txt"
     msg_file.write_text(message, encoding="utf-8")
 
-    delivery_text = f"Read and respond to the message at: {msg_file}"
+    delivery_text = sanitize_for_send_keys(f"Read and respond to the message at: {msg_file}")
     return process_manager.send_keys(agent_id, delivery_text, enter=True)

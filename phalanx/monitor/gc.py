@@ -11,6 +11,8 @@ import shutil
 import time
 from pathlib import Path
 
+from phalanx.process.worktree import WORKTREE_BASE
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_GC_HOURS = 24
@@ -28,6 +30,27 @@ def _kill_monitor_session(team_id: str) -> None:
         logger.info("GC: killed monitor session %s", session_name)
     except Exception:
         pass
+
+
+def _cleanup_worktrees(team_id: str) -> None:
+    """Remove all git worktree directories associated with a dead team.
+
+    Iterates WORKTREE_BASE/<repo>/ and removes directories whose name starts
+    with the team_id. Uses shutil.rmtree rather than `git worktree remove`
+    because the original repo path is unavailable during GC.
+    """
+    if not WORKTREE_BASE.exists():
+        return
+    for repo_dir in WORKTREE_BASE.iterdir():
+        if not repo_dir.is_dir():
+            continue
+        for wt_dir in repo_dir.iterdir():
+            if wt_dir.is_dir() and wt_dir.name.startswith(team_id):
+                try:
+                    shutil.rmtree(wt_dir, ignore_errors=True)
+                    logger.info("GC: removed worktree %s", wt_dir)
+                except Exception:
+                    logger.debug("GC: failed to remove worktree %s", wt_dir)
 
 
 def run_gc(
@@ -53,6 +76,7 @@ def run_gc(
 
     for team_id in dead_teams:
         _kill_monitor_session(team_id)
+        _cleanup_worktrees(team_id)
 
         team_dir = phalanx_root / "teams" / team_id
         if team_dir.exists():

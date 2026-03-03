@@ -74,21 +74,3 @@ def list_worktrees(repo_path: Path) -> list[dict[str, str]]:
     if current:
         worktrees.append(current)
     return worktrees
-
-
-def cleanup_team_worktrees(repo_path: Path, team_id: str) -> int:
-    """Remove all worktrees whose name starts with the team_id. Returns count."""
-    repo_name = repo_path.name
-    team_dir = WORKTREE_BASE / repo_name
-    if not team_dir.exists():
-        return 0
-
-    count = 0
-    for wt in team_dir.iterdir():
-        if wt.is_dir() and wt.name.startswith(team_id):
-            try:
-                remove_worktree(repo_path, wt.name)
-                count += 1
-            except subprocess.CalledProcessError:
-                pass
-    return count

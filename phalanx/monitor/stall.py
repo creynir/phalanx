@@ -149,28 +149,80 @@ def _check_process_exited(lines: list[str]) -> bool:
     """Detect when the agent binary has crashed and the tmux session fell
     back to a bare shell prompt.  Garbled output like ``zsh: command not found``
     is a strong signal that buffered agent output was dumped into the shell.
+
+    Also catches silent exits where only a bare prompt remains.
     """
     if not lines:
         return False
-    tail = "\n".join(lines[-12:])
 
-    shell_error_count = len(
-        re.findall(
-            r"zsh:|bash:|sh:|command not found|parse error|no such file",
-            tail,
-            re.IGNORECASE,
-        )
+    filtered = _filter_code_blocks(lines[-12:])
+
+    error_pattern = re.compile(
+        r"zsh:|bash:|sh:|command not found|parse error|no such file",
+        re.IGNORECASE,
     )
-    if shell_error_count >= 2:
+    error_lines = sum(1 for ln in filtered if error_pattern.search(ln))
+
+    if error_lines >= 2:
         return True
+
+    if error_lines >= 1:
+        return False
 
     last_lines = [ln.strip() for ln in lines[-4:] if ln.strip()]
     if last_lines:
         last = last_lines[-1]
-        if re.match(r"^[\w@.~/ ()-]+[$%#>]\s*$", last):
+        if re.match(r"^[\w@.~/:, ()-]*[$%#>]\s*$", last):
             return True
 
     return False
+
+
+def _filter_code_blocks(lines: list[str]) -> list[str]:
+    """Remove lines that appear inside markdown code fences."""
+    result = []
+    in_block = False
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("```"):
+            in_block = not in_block
+            continue
+        if not in_block:
+            result.append(line)
+    return result
+
+
+@_register_pattern("buffer_corrupted")
+def _check_buffer_corrupted(lines: list[str]) -> bool:
+    """Detect when send_keys injection has corrupted the terminal buffer,
+    leaving the shell in quote-continuation mode.
+    """
+    if not lines:
+        return False
+    tail = "\n".join(lines[-8:])
+    return bool(
+        re.search(
+            r"^(quote|dquote|bquote|heredoc)>",
+            tail,
+            re.MULTILINE,
+        )
+    )
+
+
+@_register_pattern("rate_limited")
+def _check_rate_limited(lines: list[str]) -> bool:
+    """Detect API rate limit errors in stream output."""
+    if not lines:
+        return False
+    tail = "\n".join(lines[-12:])
+    return bool(
+        re.search(
+            r"(rate.?limit|429 Too Many Requests|quota exceeded|"
+            r"too many requests|throttled|RateLimitError)",
+            tail,
+            re.IGNORECASE,
+        )
+    )
 
 
 @_register_pattern("agent_idle")
@@ -338,10 +390,25 @@ class StallDetector:
             logger.warning("Failed to check artifact status for %s: %s", agent_id, e)
             return False
 
+    def _agent_has_escalation(self, agent_id: str) -> bool:
+        """Return True if the agent wrote an escalation artifact (not idle)."""
+        if self._db is None:
+            return False
+        try:
+            agent = self._db.get_agent(agent_id)
+            return agent is not None and agent.get("artifact_status") == "escalation"
+        except Exception as e:
+            logger.warning("Failed to check escalation status for %s: %s", agent_id, e)
+            return False
+
     def _detect_prompt(self, agent_id: str, screen: list[str]) -> PromptDetection | None:
         """Run all registered prompt patterns against the screen."""
         for pattern_name, checker in _PROMPT_PATTERNS:
             if pattern_name == "agent_idle":
+                # Agent sitting at prompt after writing an escalation artifact
+                # is NOT idle — it's waiting for Outer Loop intervention.
+                if self._agent_has_escalation(agent_id):
+                    continue
                 # Agent sitting at prompt is only a problem if it hasn't written
                 # its artifact yet — otherwise it finished normally.
                 if not self._agent_has_artifact(agent_id):

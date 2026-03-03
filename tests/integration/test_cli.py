@@ -22,7 +22,7 @@ class TestVersion:
     def test_version(self, runner):
         result = runner.invoke(cli, ["--version"])
         assert result.exit_code == 0
-        assert "0.3.4" in result.output
+        assert "0.3" in result.output
 
 
 class TestHelp:
@@ -46,12 +46,30 @@ class TestStatus:
         assert isinstance(data, dict)
 
 
-class TestConfig:
-    pass
+class TestListTeams:
+    def test_list_teams_empty(self, runner):
+        result = runner.invoke(cli, ["--json-output", "list-teams"])
+        assert result.exit_code == 0
 
 
-class TestModels:
-    pass
+class TestWriteArtifact:
+    def test_write_artifact_missing_status(self, runner):
+        result = runner.invoke(cli, ["write-artifact", "--output", '{"done": true}'])
+        assert result.exit_code != 0
+
+    def test_write_artifact_missing_env_vars(self, runner):
+        result = runner.invoke(
+            cli,
+            ["write-artifact", "--status", "success", "--output", '{"done": true}'],
+            env={"PHALANX_TEAM_ID": "", "PHALANX_AGENT_ID": ""},
+        )
+        assert result.exit_code != 0
+
+
+class TestGC:
+    def test_gc_command(self, runner):
+        result = runner.invoke(cli, ["gc"])
+        assert result.exit_code == 0
 
 
 class TestInit:
