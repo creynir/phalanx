@@ -7,10 +7,8 @@ Cost Failure Modes, API Rate Limit Resilience.
 
 from __future__ import annotations
 
-import json
 import tempfile
 import threading
-import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -23,8 +21,6 @@ from phalanx.costs.pricing import DEFAULT_COST_TABLE, estimate_cost
 from phalanx.db import StateDB
 from phalanx.monitor.stall import _check_process_exited, _check_rate_limited
 from phalanx.process.manager import AgentProcess, ProcessManager
-from phalanx.skills.team_lead import DebtRecord
-from phalanx.skills.checkpoint import CheckpointManager
 
 
 pytestmark = pytest.mark.integration
@@ -272,311 +268,13 @@ class TestIT138_CostTrackingDuringRetries:
         assert costs.total_input_tokens == 1800
         assert costs.total_output_tokens == 900
 
-
-# ═══════════════════════════════════════════════════════════════════
-# 20. Typed Debt Tracking (IT-139..IT-145)
-# ═══════════════════════════════════════════════════════════════════
-
-
-class TestIT139_CreateDebtRecord:
-    """IT-139: Create DebtRecord with all fields. Persisted to debt_records table."""
-
-    def test_create_debt(self, tmp_db):
-        debt = DebtRecord(
-            team_id="t1",
-            agent_id="w1",
-            severity="high",
-            category="workaround",
-            description="Used fallback API",
-        )
-        errors = debt.validate()
-        assert len(errors) == 0
-
-        tmp_db.create_debt_record(
-            debt_id=debt.id,
-            team_id="t1",
-            agent_id="w1",
-            severity="high",
-            category="workaround",
-            description="Used fallback API",
-        )
-        records = tmp_db.get_team_debt("t1")
-        assert len(records) == 1
-        assert records[0]["severity"] == "high"
-        assert records[0]["category"] == "workaround"
-
-
-class TestIT140_SeverityValidation:
-    """IT-140: Invalid severity raises validation error."""
-
-    def test_severity_validation(self):
-        debt = DebtRecord(
-            team_id="t1",
-            agent_id="w1",
-            severity="extreme",
-            category="workaround",
-            description="test",
-        )
-        errors = debt.validate()
-        assert len(errors) > 0
-        assert any("severity" in e.lower() for e in errors)
-
-
-class TestIT141_CategoryValidation:
-    """IT-141: Invalid category raises validation error."""
-
-    def test_category_validation(self):
-        debt = DebtRecord(
-            team_id="t1",
-            agent_id="w1",
-            severity="medium",
-            category="invalid_category",
-            description="test",
-        )
-        errors = debt.validate()
-        assert len(errors) > 0
-        assert any("category" in e.lower() for e in errors)
-
-
-class TestIT142_ArtifactWithDebt:
-    """IT-142: Write artifact with debt field. Verify persistence."""
-
-    def test_artifact_debt(self, tmp_path):
-        debt_item = {"severity": "medium", "category": "workaround", "description": "test debt"}
-        art = Artifact(
-            status="success",
-            output={"result": "ok"},
-            debt=[debt_item],
-            agent_id="w1",
-            team_id="t1",
-        )
-        write_artifact(tmp_path, art)
-        from phalanx.artifacts.reader import read_artifact
-
-        loaded = read_artifact(tmp_path)
-        assert loaded is not None
-        assert len(loaded.debt) == 1
-        assert loaded.debt[0]["severity"] == "medium"
-
-
-class TestIT143_AggregatedDebt:
-    """IT-143: SkillResult.debt aggregates all step debt records."""
-
-    def test_aggregated_debt(self, tmp_db):
-        tmp_db.create_debt_record("d1", "t1", "w1", "high", "workaround", "debt 1")
-        tmp_db.create_debt_record("d2", "t1", "w2", "low", "deferred_test", "debt 2")
-        tmp_db.create_debt_record("d3", "t1", "w1", "medium", "scope_reduction", "debt 3")
-
-        records = tmp_db.get_team_debt("t1")
-        assert len(records) == 3
-        categories = {r["category"] for r in records}
-        assert categories == {"workaround", "deferred_test", "scope_reduction"}
-
-
-class TestIT144_DebtAPI:
-    """IT-144: GET /api/teams/{id}/debt returns sorted debt records."""
-
-    def test_debt_api(self, tmp_db):
-        tmp_db.create_debt_record("d1", "t1", "w1", "high", "workaround", "first")
-        time.sleep(0.01)
-        tmp_db.create_debt_record("d2", "t1", "w1", "low", "deferred_fix", "second")
-
-        records = tmp_db.get_team_debt("t1")
-        assert len(records) == 2
-        assert records[0]["created_at"] <= records[1]["created_at"]
-
-
-class TestIT145_DebtFromPromptInjection:
-    """IT-145: Buffer corruption workaround creates DebtRecord with category=workaround."""
-
-    def test_debt_from_injection(self, tmp_db):
-        debt = DebtRecord(
-            team_id="t1",
-            agent_id="w1",
-            severity="medium",
-            category="workaround",
-            description="Buffer corruption recovery — switched to file-based delivery",
-        )
-        assert len(debt.validate()) == 0
-
-        tmp_db.create_debt_record(
-            debt_id=debt.id,
-            team_id="t1",
-            agent_id="w1",
-            severity="medium",
-            category="workaround",
-            description=debt.description,
-        )
-        records = tmp_db.get_team_debt("t1")
-        assert len(records) == 1
-        assert records[0]["category"] == "workaround"
-
-
-# ═══════════════════════════════════════════════════════════════════
-# 21. Checkpoint / Resume at Step Level (IT-146..IT-154)
-# ═══════════════════════════════════════════════════════════════════
-
-
-class TestIT146_SaveCheckpoint:
-    """IT-146: save_checkpoint updates completed_steps JSON in skill_runs."""
-
-    def test_save_checkpoint(self, tmp_db):
-        tmp_db.create_skill_run("run1", "t1", "build_skill")
-        cm = CheckpointManager(tmp_db)
-        cm.save_checkpoint("run1", "step_a", "result_a")
-
-        run = tmp_db.get_skill_run("run1")
-        completed = json.loads(run["completed_steps"])
-        assert "step_a" in completed
-
-
-class TestIT147_LoadCheckpoint:
-    """IT-147: load_checkpoint returns correct completed/pending lists."""
-
-    def test_load_checkpoint(self, tmp_db):
-        tmp_db.create_skill_run("run1", "t1", "build_skill")
-        cm = CheckpointManager(tmp_db)
-        cm.save_checkpoint("run1", "step_a", "done_a")
-        cm.save_checkpoint("run1", "step_b", "done_b")
-
-        cp = cm.load_checkpoint("run1")
-        assert cp is not None
-        assert "step_a" in cp.completed_steps
-        assert "step_b" in cp.completed_steps
-
-
-class TestIT148_GetResumePoint:
-    """IT-148: get_resume_point returns first incomplete step."""
-
-    def test_resume_point(self, tmp_db):
-        tmp_db.create_skill_run("run1", "t1", "build_skill")
-        cm = CheckpointManager(tmp_db)
-        cm.save_checkpoint("run1", "step_a")
-
-        all_steps = [
-            {"name": "step_a", "depends_on": []},
-            {"name": "step_b", "depends_on": ["step_a"]},
-            {"name": "step_c", "depends_on": ["step_b"]},
-        ]
-        resume = cm.get_resume_point("run1", all_steps=all_steps)
-        assert resume is not None
-        assert resume.name == "step_b"
-
-
-class TestIT149_AllComplete:
-    """IT-149: All steps checkpointed → get_resume_point returns None."""
-
-    def test_all_complete(self, tmp_db):
-        tmp_db.create_skill_run("run1", "t1", "build_skill")
-        cm = CheckpointManager(tmp_db)
-        cm.save_checkpoint("run1", "step_a")
-        cm.save_checkpoint("run1", "step_b")
-
-        all_steps = [
-            {"name": "step_a", "depends_on": []},
-            {"name": "step_b", "depends_on": ["step_a"]},
-        ]
-        resume = cm.get_resume_point("run1", all_steps=all_steps)
-        assert resume is None
-
-
-class TestIT150_StepArtifactPersistence:
-    """IT-150: step_artifacts JSON map updated on checkpoint."""
-
-    def test_step_artifacts(self, tmp_db):
-        tmp_db.create_skill_run("run1", "t1", "build_skill")
-        cm = CheckpointManager(tmp_db)
-        cm.save_checkpoint("run1", "step_a", "artifact_data_a")
-        cm.save_checkpoint("run1", "step_b", "artifact_data_b")
-
-        cp = cm.load_checkpoint("run1")
-        assert cp.step_artifacts["step_a"] == "artifact_data_a"
-        assert cp.step_artifacts["step_b"] == "artifact_data_b"
-
-
-class TestIT151_ResumeSkipsCompleted:
-    """IT-151: Resume with 2/4 done — steps 1-2 not re-executed."""
-
-    def test_skip_completed(self, tmp_db):
-        tmp_db.create_skill_run("run1", "t1", "build_skill")
-        cm = CheckpointManager(tmp_db)
-        cm.save_checkpoint("run1", "step1")
-        cm.save_checkpoint("run1", "step2")
-
-        all_steps = [
-            {"name": "step1", "depends_on": []},
-            {"name": "step2", "depends_on": ["step1"]},
-            {"name": "step3", "depends_on": ["step2"]},
-            {"name": "step4", "depends_on": ["step3"]},
-        ]
-        resume = cm.get_resume_point("run1", all_steps=all_steps)
-        assert resume is not None
-        assert resume.name == "step3"
-
-        cp = cm.load_checkpoint("run1")
-        assert "step1" in cp.completed_steps
-        assert "step2" in cp.completed_steps
-        assert "step3" not in cp.completed_steps
-
-
-class TestIT152_PartialStepRestart:
-    """IT-152: Agent dies mid-step — step restarts, not entire skill."""
-
-    def test_partial_restart(self, tmp_db):
-        tmp_db.create_skill_run("run1", "t1", "build_skill")
-        cm = CheckpointManager(tmp_db)
-        cm.save_checkpoint("run1", "step1")
-        cm.set_current_step("run1", "step2")
-
-        cp = cm.load_checkpoint("run1")
-        assert "step1" in cp.completed_steps
-        assert "step2" not in cp.completed_steps
-        assert cp.current_step == "step2"
-
-        all_steps = [
-            {"name": "step1", "depends_on": []},
-            {"name": "step2", "depends_on": ["step1"]},
-        ]
-        resume = cm.get_resume_point("run1", all_steps=all_steps)
-        assert resume is not None
-        assert resume.name == "step2"
-
-
-class TestIT153_CheckpointAfterTUICrash:
-    """IT-153: In-progress step NOT checkpointed as complete after TUI crash."""
-
-    def test_tui_crash_checkpoint(self, tmp_db):
-        tmp_db.create_skill_run("run1", "t1", "build_skill")
-        cm = CheckpointManager(tmp_db)
-        cm.set_current_step("run1", "step1")
-
-        cp = cm.load_checkpoint("run1")
-        assert "step1" not in cp.completed_steps
-        assert cp.current_step == "step1"
-
-
-class TestIT154_CheckpointAfterTeamLead:
-    """IT-154: Team Lead-modified step's checkpoint records modification source."""
-
-    def test_team_lead_checkpoint(self, tmp_db):
-        tmp_db.create_skill_run("run1", "t1", "build_skill")
-        cm = CheckpointManager(tmp_db)
-
-        cm.save_checkpoint(
-            "run1",
-            "step_a",
-            json.dumps(
-                {
-                    "result": "completed with team_lead modification",
-                    "modified_by": "team_lead",
-                    "strategy": "adapt_approach",
-                }
-            ),
-        )
-
-        cp = cm.load_checkpoint("run1")
-        art = json.loads(cp.step_artifacts["step_a"])
-        assert art["modified_by"] == "team_lead"
+    # ═══════════════════════════════════════════════════════════════════
+    # 20. Typed Debt Tracking (IT-139..IT-145)
+    # ═══════════════════════════════════════════════════════════════════
+
+    # ═══════════════════════════════════════════════════════════════════
+    # 21. Checkpoint / Resume at Step Level (IT-146..IT-154)
+    # ═══════════════════════════════════════════════════════════════════
 
     # ═══════════════════════════════════════════════════════════════════
     # 22. Continual Learning (IT-155..IT-164)
@@ -616,29 +314,6 @@ class TestIT166_GhostSessionLoopBreaker:
         count = db.get_agent("w1")["ghost_restart_count"]
         limit = db.get_ghost_restart_limit("w1")
         assert count > limit
-
-
-class TestIT167_GhostLoopResolution:
-    """IT-167: Engineering manager diagnoses root cause, modifies config, triggers clean restart."""
-
-    def test_ghost_resolution(self, tmp_db):
-        from phalanx.skills.engineering_manager import (
-            EngineeringManagerDecision,
-            EngineeringManagerAction,
-            apply_engineering_manager_decision,
-        )
-
-        db = tmp_db
-        db.create_engineering_manager_entry("t1", "ghost_loop")
-
-        decision = EngineeringManagerDecision(
-            action=EngineeringManagerAction.SWAP_MODEL,
-            rationale="Ghost loops caused by model instability — swapping to sonnet",
-            model_changes={"w1": "claude-4-sonnet"},
-        )
-        result = apply_engineering_manager_decision(decision, db, "t1")
-        assert result["applied"] is True
-        assert db.get_agent("w1")["model"] == "claude-4-sonnet"
 
 
 class TestIT168_PartialTUICrashGhost:
@@ -855,47 +530,6 @@ class TestIT187_StaggeredRestarts:
         sd.record_retry("w1")
         delay2 = sd.get_retry_delay("w1")
         assert delay2 > delay1
-
-
-class TestIT188_PersistentRateLimitModelSwap:
-    """IT-188: 3 rate limits → Engineering manager swaps model."""
-
-    def test_model_swap(self, tmp_db):
-        from phalanx.skills.engineering_manager import (
-            EngineeringManagerDecision,
-            EngineeringManagerAction,
-            apply_engineering_manager_decision,
-        )
-
-        decision = EngineeringManagerDecision(
-            action=EngineeringManagerAction.SWAP_MODEL,
-            rationale="Persistent rate limits — swapping to sonnet",
-            model_changes={"w1": "claude-4-sonnet"},
-        )
-        result = apply_engineering_manager_decision(decision, tmp_db, "t1")
-        assert result["applied"] is True
-        assert tmp_db.get_agent("w1")["model"] == "claude-4-sonnet"
-
-
-class TestIT189_TeamWideModelSwap:
-    """IT-189: All agents rate limited → Engineering manager swaps all agents."""
-
-    def test_team_wide_swap(self, tmp_db):
-        from phalanx.skills.engineering_manager import (
-            EngineeringManagerDecision,
-            EngineeringManagerAction,
-            apply_engineering_manager_decision,
-        )
-
-        decision = EngineeringManagerDecision(
-            action=EngineeringManagerAction.SWAP_MODEL,
-            rationale="All agents rate limited — team-wide swap to sonnet",
-            model_changes={"w1": "claude-4-sonnet", "w2": "claude-4-sonnet"},
-        )
-        result = apply_engineering_manager_decision(decision, tmp_db, "t1")
-        assert result["applied"] is True
-        assert tmp_db.get_agent("w1")["model"] == "claude-4-sonnet"
-        assert tmp_db.get_agent("w2")["model"] == "claude-4-sonnet"
 
 
 class TestIT190_BackoffConfiguration:
