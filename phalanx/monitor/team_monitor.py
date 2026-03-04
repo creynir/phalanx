@@ -74,18 +74,21 @@ class _StreamLogCostScanner:
 
         try:
             new_text = new_bytes.decode("utf-8", errors="replace")
-        except Exception:
+        except Exception as e:
+            logger.debug("Failed to decode token log: %s", e)
             return
 
         try:
             backend = get_backend(backend_name)
-        except Exception:
+        except Exception as e:
+            logger.debug("Failed to get backend %s: %s", backend_name, e)
             return
 
         for line in new_text.splitlines():
             try:
                 usage = backend.parse_token_usage(line)
-            except Exception:
+            except Exception as e:
+                logger.debug("Failed to parse token usage: %s", e)
                 continue
             if usage is None:
                 continue
@@ -564,7 +567,8 @@ def _should_wake_suspended(db: StateDB, agent: dict) -> bool:
 
     try:
         recent_feed = db.get_feed(team_id, limit=10, since=agent_updated)
-        return len(recent_feed) > 0
+        # Only wake if someone ELSE posted to the feed
+        return any(msg.get("sender_id") != agent["id"] for msg in recent_feed)
     except Exception:
         return False
 

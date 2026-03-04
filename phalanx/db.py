@@ -222,8 +222,10 @@ class StateDB:
             try:
                 conn.execute("ALTER TABLE agents DROP COLUMN stall_seconds")
                 conn.execute("ALTER TABLE agents DROP COLUMN max_runtime")
-            except Exception:
-                pass
+            except Exception as e:
+                import logging
+
+                logging.getLogger(__name__).warning("Migration v4 column drop failed: %s", e)
 
         if from_version < 5:
             self._migrate_to_v5(conn)
@@ -436,10 +438,11 @@ class StateDB:
             return [dict(r) for r in rows]
 
     def update_heartbeat(self, agent_id: str) -> None:
+        now = time.time()
         with self.transaction() as conn:
             conn.execute(
                 "UPDATE agents SET last_heartbeat = ?, updated_at = ? WHERE id = ?",
-                (time.time(), time.time(), agent_id),
+                (now, now, agent_id),
             )
 
     # -- Feed (shared team chat) --
@@ -627,15 +630,15 @@ class StateDB:
         step_name: str | None = None,
         source_agent_id: str | None = None,
     ) -> int | None:
-        if content_hash:
-            with self._connect() as conn:
+        with self.transaction() as conn:
+            if content_hash:
                 existing = conn.execute(
                     "SELECT id FROM team_context WHERE team_id = ? AND content_hash = ?",
                     (team_id, content_hash),
                 ).fetchone()
                 if existing:
                     return None  # deduplicate
-        with self.transaction() as conn:
+
             cursor = conn.execute(
                 "INSERT INTO team_context "
                 "(team_id, skill_run_id, step_name, context_type, content, "

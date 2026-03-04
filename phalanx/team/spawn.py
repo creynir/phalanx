@@ -195,6 +195,12 @@ _SOUL_FILE_MAP = {
 
 def _resolve_soul_file(phalanx_root: Path, role: str) -> Path | None:
     """Find the appropriate soul file for the role."""
+    if role not in _SOUL_FILE_MAP and role != "worker":
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "No specific soul file for role '%s', falling back to worker.md", role
+        )
     filename = _SOUL_FILE_MAP.get(role, "worker.md")
 
     soul_dir = phalanx_root / "soul"

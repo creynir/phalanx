@@ -207,7 +207,7 @@ def _build_worker_resume(
     original_task: str,
     soul_content: str,
     all_agents: list[dict],
-    db: "StateDB | None" = None,
+    db: StateDB | None = None,
 ) -> str:
     """Build resume prompt for a worker agent.
 
@@ -336,8 +336,10 @@ def _build_engineering_manager_resume(
                     f" payload={r.get('payload', '')}\n"
                 )
             resume_ctx += "\n"
-    except Exception:
-        pass
+    except Exception as e:
+        import logging
+
+        logging.getLogger(__name__).warning("Failed to get recent events: %s", e)
 
     # Escalation context from feed
     try:
@@ -353,8 +355,10 @@ def _build_engineering_manager_resume(
             for m in escalation_msgs:
                 resume_ctx += f"- From {m['sender_id']}: {m['content']}\n"
             resume_ctx += "\n"
-    except Exception:
-        pass
+    except Exception as e:
+        import logging
+
+        logging.getLogger(__name__).warning("Failed to get recent events: %s", e)
 
     resume_ctx += (
         "### Instructions\n"
@@ -585,8 +589,10 @@ def _kill_team_monitor(team_id: str) -> None:
         session = server.sessions.get(session_name=session_name)
         session.kill()
         logger.info("Killed team monitor session %s", session_name)
-    except Exception:
-        pass
+    except Exception as e:
+        import logging
+
+        logging.getLogger(__name__).warning("Failed to get recent events: %s", e)
 
 
 def get_team_result(phalanx_root: Path, team_id: str) -> dict | None:
