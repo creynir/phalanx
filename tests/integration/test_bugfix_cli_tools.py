@@ -509,3 +509,67 @@ class TestBug1AndBug2Interaction:
         assert "worker-p-blocked" not in result["resumed_agents"]
         team = db.get_team("t-partial")
         assert team["status"] == "running"
+
+
+# ---------------------------------------------------------------------------
+# E2E Workflows (Idle Timeout -> Resume -> Message)
+# ---------------------------------------------------------------------------
+
+
+class TestE2EIdleResumeMessageFlow:
+    """End-to-end integration test simulating the real-world use case where a team
+    goes idle, and is later resumed with new instructions."""
+
+    def test_idle_timeout_resume_and_message_chain(self, runner, tmp_path):
+        """Simulate a team that went idle (suspended/dead), then run `resume`
+        followed by `message`.
+        """
+        db_instance = StateDB(tmp_path / "state.db")
+        # 1. Simulate the state after an idle timeout
+        _make_team(db_instance, "team-e2e")
+        # In an idle timeout, the lead might be suspended, workers might be dead or suspended.
+        _make_agent(db_instance, "lead-e2e", "team-e2e", role="lead", status="suspended")
+        _make_agent(db_instance, "worker-e2e", "team-e2e", role="worker", status="dead")
+
+        mock_proc = MagicMock()
+        mock_proc.stream_log = tmp_path / "stream.log"
+
+        with (
+            patch("phalanx.cli.StateDB", return_value=db_instance),
+            patch("phalanx.cli.load_config") as mock_cfg,
+            patch("phalanx.team.orchestrator.ProcessManager") as mock_pm_cls,
+            patch("phalanx.team.orchestrator.HeartbeatMonitor"),
+            patch("phalanx.backends.get_backend") as mock_gb,
+            patch("phalanx.team.create._spawn_team_monitor"),
+            patch("phalanx.comms.messaging.deliver_message", return_value=True) as mock_deliver,
+        ):
+            mock_cfg.return_value = MagicMock(
+                idle_timeout_seconds=1800,
+                max_runtime_seconds=1800,
+                default_backend="cursor",
+                default_model=None,
+            )
+            mock_pm = MagicMock()
+            mock_pm.spawn.return_value = mock_proc
+            mock_pm_cls.return_value = mock_pm
+            mock_gb.return_value = MagicMock()
+
+            # 2. Run the `resume` command
+            result_resume = runner.invoke(cli, ["--root", str(tmp_path), "resume", "team-e2e"])
+            assert result_resume.exit_code == 0, f"resume failed: {result_resume.output}"
+
+            # Verify agents are woken up
+            assert db_instance.get_agent("lead-e2e")["status"] == "running"
+            assert db_instance.get_agent("worker-e2e")["status"] == "running"
+
+            # 3. Run the `message` command (chaining `&& phalanx message ...`)
+            result_msg = runner.invoke(
+                cli, ["--root", str(tmp_path), "message", "team-e2e", "Do more work"]
+            )
+            assert result_msg.exit_code == 0, f"message failed: {result_msg.output}"
+            assert "Message delivered to team lead (lead-e2e)" in result_msg.output
+
+            # Verify the message delivery system was invoked
+            from unittest.mock import ANY
+
+            mock_deliver.assert_called_once_with(ANY, "lead-e2e", "Do more work")
