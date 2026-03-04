@@ -444,13 +444,13 @@ def resume_team(
     process_manager: ProcessManager,
     heartbeat_monitor: HeartbeatMonitor,
     team_id: str,
-    resume_all: bool = False,
+    resume_all: bool = True,
     auto_approve: bool = False,
 ) -> dict:
-    """Resume a dead/stopped team by restarting agents.
+    """Resume a dead/stopped team by restarting all dead/suspended agents.
 
-    By default only restarts the team lead. With resume_all=True,
-    restarts all dead agents.
+    By default restarts ALL dead/suspended agents. Set resume_all=False to
+    restart only the team lead (legacy behaviour, not recommended).
     """
     from phalanx.backends import get_backend
     from phalanx.team.create import _spawn_team_monitor

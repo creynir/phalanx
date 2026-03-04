@@ -564,7 +564,11 @@ def message_cmd(ctx, team_id, text):
 @click.argument("text")
 @click.pass_context
 def message_agent_cmd(ctx, agent_id, text):
-    """Send message to a specific agent via send-keys."""
+    """Send message to a specific agent via send-keys.
+
+    Works for agents in 'running' or 'blocked_on_prompt' state.
+    For blocked agents, the message is sent as raw keystrokes to unblock them.
+    """
     from phalanx.comms.messaging import deliver_message
     from phalanx.process.manager import ProcessManager
 
@@ -576,8 +580,9 @@ def message_agent_cmd(ctx, agent_id, text):
         click.echo(f"Agent '{agent_id}' not found", err=True)
         raise SystemExit(1)
 
-    if agent["status"] != "running":
-        status = agent["status"]
+    status = agent["status"]
+    # Allow delivery to running AND blocked_on_prompt agents — both have a live tmux pane.
+    if status not in ("running", "blocked_on_prompt"):
         click.echo(
             f"Error: Agent {agent_id} is {status} — message not delivered.\n"
             f"Use 'phalanx resume-agent {agent_id}' to restart it.",
@@ -589,6 +594,10 @@ def message_agent_cmd(ctx, agent_id, text):
 
     pm = ProcessManager(root)
     delivered = deliver_message(pm, agent_id, text)
+
+    if status == "blocked_on_prompt" and delivered:
+        # The keystroke may have unblocked the agent; update its status to running.
+        db.update_agent(agent_id, status="running")
 
     if ctx.obj.get("json_mode"):
         _json_output({"ok": delivered, "agent_id": agent_id, "delivered": delivered})
@@ -722,10 +731,15 @@ def send_keys_cmd(ctx, agent_id, keys, no_enter):
 
 @cli.command("resume")
 @click.argument("team_id")
-@click.option("--all-agents", is_flag=True, help="Resume all dead agents, not just the lead")
+@click.option(
+    "--lead-only",
+    is_flag=True,
+    default=False,
+    help="Resume only the team lead, leaving other agents dead",
+)
 @click.pass_context
-def resume_cmd(ctx, team_id, all_agents):
-    """Resume a stopped/dead team by restarting its team lead."""
+def resume_cmd(ctx, team_id, lead_only):
+    """Resume a stopped/dead team by restarting all dead/suspended agents."""
     from phalanx.monitor.heartbeat import HeartbeatMonitor
     from phalanx.process.manager import ProcessManager
     from phalanx.team.orchestrator import resume_team
@@ -748,7 +762,7 @@ def resume_cmd(ctx, team_id, all_agents):
         process_manager=pm,
         heartbeat_monitor=hb,
         team_id=team_id,
-        resume_all=all_agents,
+        resume_all=not lead_only,
         auto_approve=ctx.obj.get("auto_approve", False),
     )
 
@@ -765,9 +779,18 @@ def resume_cmd(ctx, team_id, all_agents):
 
 @cli.command("resume-agent")
 @click.argument("agent_id")
+@click.option(
+    "--reply",
+    default=None,
+    help="Reply to send as keystrokes when agent is blocked_on_prompt (e.g. 'y')",
+)
 @click.pass_context
-def resume_agent_cmd(ctx, agent_id):
-    """Resume a single dead/suspended agent."""
+def resume_agent_cmd(ctx, agent_id, reply):
+    """Resume a single dead/suspended agent, or unblock a blocked_on_prompt agent.
+
+    Use --reply to send a keystroke reply to an agent waiting on a prompt.
+    Example: phalanx resume-agent <id> --reply y
+    """
     from phalanx.monitor.heartbeat import HeartbeatMonitor
     from phalanx.process.manager import ProcessManager
     from phalanx.team.orchestrator import resume_single_agent
@@ -776,6 +799,53 @@ def resume_agent_cmd(ctx, agent_id):
     phalanx_config = _get_config(root)
     db = _get_db(root)
     pm = ProcessManager(root)
+
+    agent = db.get_agent(agent_id)
+    if agent is None:
+        if ctx.obj.get("json_mode"):
+            _json_output({"ok": False, "error": f"Agent {agent_id} not found"})
+        else:
+            click.echo(f"Error: Agent {agent_id} not found", err=True)
+        raise SystemExit(1)
+
+    # Handle blocked_on_prompt: send reply keystrokes instead of restarting
+    if agent["status"] == "blocked_on_prompt":
+        if reply is None:
+            click.echo(
+                f"Error: Agent {agent_id} is blocked_on_prompt.\n"
+                f"Use --reply to send a response (e.g. --reply y).",
+                err=True,
+            )
+            if ctx.obj.get("json_mode"):
+                _json_output(
+                    {
+                        "ok": False,
+                        "agent_id": agent_id,
+                        "status": "blocked_on_prompt",
+                        "hint": "Use --reply <text> to unblock",
+                    }
+                )
+            raise SystemExit(1)
+
+        success = pm.send_keys(agent_id, reply, enter=True)
+        if success:
+            db.update_agent(agent_id, status="running")
+        result = {
+            "agent_id": agent_id,
+            "team_id": agent["team_id"],
+            "status": "running" if success else "blocked_on_prompt",
+            "unblocked": success,
+        }
+        if ctx.obj.get("json_mode"):
+            _json_output({"ok": success, **result})
+        else:
+            if success:
+                click.echo(f"Agent {agent_id} unblocked (replied: {reply!r})")
+            else:
+                click.echo(f"Failed to send reply to agent {agent_id}", err=True)
+                raise SystemExit(1)
+        return
+
     hb = HeartbeatMonitor(idle_timeout=phalanx_config.idle_timeout_seconds)
 
     try:
