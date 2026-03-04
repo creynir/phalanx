@@ -192,7 +192,11 @@ def _build_lead_resume(
         "5. If all work is already complete, write your final team artifact.\n"
     )
 
-    merged = f"Execute the following task immediately without summarising or asking questions:\n\n{prompt}{resume_ctx}"
+    merged = (
+        "Execute the following task immediately "
+        "without summarising or asking questions:"
+        f"\n\n{prompt}{resume_ctx}"
+    )
     return merged
 
 
@@ -256,7 +260,11 @@ def _build_worker_resume(
             "You did not complete your previous task. Pick up where you left off and complete it.\n"
         )
 
-    merged = f"Execute the following task immediately without summarising or asking questions:\n\n{prompt}{resume_ctx}"
+    merged = (
+        "Execute the following task immediately "
+        "without summarising or asking questions:"
+        f"\n\n{prompt}{resume_ctx}"
+    )
     return merged
 
 
@@ -272,7 +280,7 @@ def _build_engineering_manager_resume(
     """Build resume prompt for an engineering manager (outer loop) agent.
 
     Injects full team state, all artifacts, event log summary,
-    the escalation context, and DAG state.
+    and escalation context.
     """
     prompt = soul_content
     if "{task}" in prompt:
@@ -348,21 +356,6 @@ def _build_engineering_manager_resume(
     except Exception:
         pass
 
-    # DAG state from skill_runs
-    try:
-        runs = db.list_skill_runs(team_id, limit=5)
-        if runs:
-            resume_ctx += "### Skill Run State\n"
-            for r in runs:
-                resume_ctx += (
-                    f"- Run {r['id']}: skill={r['skill_name']}, status={r['status']}, "
-                    f"completed={r.get('completed_steps', '[]')}, "
-                    f"current={r.get('current_step', 'none')}\n"
-                )
-            resume_ctx += "\n"
-    except Exception:
-        pass
-
     resume_ctx += (
         "### Instructions\n"
         "1. Analyze the team state, event log, and escalation context above.\n"
@@ -371,7 +364,11 @@ def _build_engineering_manager_resume(
         "4. Write your artifact with the EngineeringManagerDecision JSON.\n"
     )
 
-    merged = f"Execute the following task immediately without summarising or asking questions:\n\n{prompt}{resume_ctx}"
+    merged = (
+        "Execute the following task immediately "
+        "without summarising or asking questions:"
+        f"\n\n{prompt}{resume_ctx}"
+    )
     return merged
 
 
@@ -390,17 +387,33 @@ def _get_post_artifact_feed(
 
 
 def get_team_status(db: StateDB, team_id: str) -> dict | None:
-    """Get comprehensive team status including all agents."""
+    """Get comprehensive team status including all agents and cost summary."""
+    from phalanx.costs.aggregator import CostAggregator
+
     team = db.get_team(team_id)
     if team is None:
         return None
 
     agents = db.list_agents(team_id)
+
+    try:
+        aggregator = CostAggregator(db)
+        cost_breakdown = aggregator.get_team_costs(team_id)
+        cost_summary = {
+            "total_tokens": cost_breakdown.total_tokens,
+            "input_tokens": cost_breakdown.total_input_tokens,
+            "output_tokens": cost_breakdown.total_output_tokens,
+            "estimated_cost": cost_breakdown.total_estimated_cost,
+        }
+    except Exception:
+        cost_summary = None
+
     return {
         "team": team,
         "agents": agents,
         "agent_count": len(agents),
         "running_count": sum(1 for a in agents if a["status"] == "running"),
+        "costs": cost_summary,
     }
 
 

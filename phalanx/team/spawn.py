@@ -22,6 +22,33 @@ from phalanx.process.manager import AgentProcess, ProcessManager
 logger = logging.getLogger(__name__)
 
 
+def _create_agent_worktree(
+    repo_path: Path,
+    team_id: str,
+    agent_id: str,
+) -> Path | None:
+    """Create a git worktree for an agent and return its path.
+
+    If the repo path is not a git repository or worktree creation fails,
+    logs a warning and returns None so spawning continues without isolation.
+    """
+    from phalanx.process.worktree import create_worktree
+
+    name = f"{team_id}-{agent_id}"
+    try:
+        wt_path = create_worktree(repo_path, name)
+        logger.info("Created worktree %s for agent %s", wt_path, agent_id)
+        return wt_path
+    except Exception as e:
+        logger.warning(
+            "Failed to create worktree for agent %s (repo=%s): %s — spawning without isolation",
+            agent_id,
+            repo_path,
+            e,
+        )
+        return None
+
+
 def spawn_agent(
     phalanx_root: Path,
     db: StateDB,
@@ -41,16 +68,26 @@ def spawn_agent(
     """Spawn an agent in TUI mode with full setup.
 
     1. Generate agent ID
-    2. Load and inject soul file
-    3. Write task file for long prompts
-    4. Create DB record
-    5. Spawn tmux session with pipe-pane
-    6. Register heartbeat monitor
+    2. Create git worktree (if --worktree flag was set)
+    3. Load and inject soul file
+    4. Write task file for long prompts
+    5. Create DB record
+    6. Spawn tmux session with pipe-pane
+    7. Register heartbeat monitor
     """
     if agent_id is None:
         agent_id = f"{role}-{uuid.uuid4().hex[:8]}"
 
     backend = get_backend(backend_name)
+
+    effective_worktree: str | None = worktree
+    effective_working_dir: str | None = working_dir
+    if worktree:
+        repo_path = phalanx_root.parent
+        wt_path = _create_agent_worktree(repo_path, team_id, agent_id)
+        if wt_path is not None:
+            effective_worktree = str(wt_path)
+            effective_working_dir = str(wt_path)
 
     soul_file = _resolve_soul_file(phalanx_root, role)
 
@@ -62,10 +99,10 @@ def spawn_agent(
             agent_id=agent_id,
             backend=backend,
             prompt=str(task_file),
-            soul_file=None,  # soul is already merged into task_file
+            soul_file=None,
             model=model,
-            worktree=worktree,
-            working_dir=working_dir,
+            worktree=effective_worktree,
+            working_dir=effective_working_dir,
             auto_approve=auto_approve,
         )
     except Exception:
@@ -79,7 +116,7 @@ def spawn_agent(
         role=role,
         model=model,
         backend=backend_name,
-        worktree=worktree,
+        worktree=effective_worktree,
     )
 
     db.update_agent(agent_id, status="running", pid=os.getpid())
@@ -138,7 +175,11 @@ def _write_task_file(
             merged = f"{soul_content}\n\n---\n\n{task}"
         # Prepend a hard imperative so the very first token the agent sees is
         # an action verb, not a document to read and summarise.
-        merged = f"Execute the following task immediately without summarising or asking questions:\n\n{merged}"
+        merged = (
+            "Execute the following task immediately "
+            "without summarising or asking questions:"
+            f"\n\n{merged}"
+        )
     else:
         merged = task
 

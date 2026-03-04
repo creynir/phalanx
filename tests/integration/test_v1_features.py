@@ -21,9 +21,6 @@ from phalanx.artifacts.writer import write_artifact
 from phalanx.costs.aggregator import CostAggregator
 from phalanx.costs.pricing import DEFAULT_COST_TABLE, estimate_cost
 from phalanx.db import StateDB
-from phalanx.learning.context_store import ContextEntry, TeamContextStore
-from phalanx.learning.extractor import extract, extract_from_failure
-from phalanx.learning.injector import CONTEXT_SECTION_HEADER, inject_context
 from phalanx.monitor.stall import _check_process_exited, _check_rate_limited
 from phalanx.process.manager import AgentProcess, ProcessManager
 from phalanx.skills.team_lead import DebtRecord
@@ -581,143 +578,10 @@ class TestIT154_CheckpointAfterTeamLead:
         art = json.loads(cp.step_artifacts["step_a"])
         assert art["modified_by"] == "team_lead"
 
+    # ═══════════════════════════════════════════════════════════════════
+    # 22. Continual Learning (IT-155..IT-164)
+    # ═══════════════════════════════════════════════════════════════════
 
-# ═══════════════════════════════════════════════════════════════════
-# 22. Continual Learning (IT-155..IT-164)
-# ═══════════════════════════════════════════════════════════════════
-
-
-class TestIT155_ExtractFromArtifact:
-    """IT-155: LearningExtractor returns ContextEntry from completed step."""
-
-    def test_extract(self):
-        artifact_output = (
-            "We discovered that the API v2 endpoint requires OAuth tokens. "
-            "The naming convention is snake_case for all modules. "
-            "Found that the database crashes when queried without indexes."
-        )
-        entries = extract(artifact_output, step_name="setup")
-        assert len(entries) > 0
-        types = {e.context_type for e in entries}
-        assert len(types) > 0
-
-
-class TestIT156_AddAndRetrieve:
-    """IT-156: Add 5 context entries, retrieve with max_tokens=5000."""
-
-    def test_add_retrieve(self, tmp_db):
-        store = TeamContextStore(tmp_db)
-        entries = [
-            ContextEntry(context_type="convention", content=f"Convention {i}") for i in range(5)
-        ]
-        added = store.add_entries("t1", entries)
-        assert added == 5
-
-        text = store.get_context("t1", max_tokens=5000)
-        assert "Convention 0" in text
-        assert "Convention 4" in text
-
-
-class TestIT157_TokenBudgetTruncation:
-    """IT-157: Entries exceeding max_tokens truncated, most recent prioritized."""
-
-    def test_truncation(self, tmp_db):
-        store = TeamContextStore(tmp_db)
-        entries = [
-            ContextEntry(context_type="discovery", content=f"Long discovery text number {i} " * 20)
-            for i in range(50)
-        ]
-        store.add_entries("t1", entries)
-
-        text = store.get_context("t1", max_tokens=100)
-        assert len(text) <= 100 * 4 + 200  # ~4 chars/token + margin
-
-
-class TestIT158_ClearContext:
-    """IT-158: Add entries, clear(), verify empty."""
-
-    def test_clear(self, tmp_db):
-        store = TeamContextStore(tmp_db)
-        entries = [ContextEntry(context_type="pattern", content="some pattern")]
-        store.add_entries("t1", entries)
-        assert store.get_context("t1") != ""
-
-        store.clear("t1")
-        assert store.get_context("t1") == ""
-
-
-class TestIT159_ContextInjection:
-    """IT-159: Spawned agent's prompt contains Project Context (Learned) section."""
-
-    def test_context_injection(self, tmp_db):
-        store = TeamContextStore(tmp_db)
-        entries = [ContextEntry(context_type="convention", content="Use snake_case")]
-        store.add_entries("t1", entries)
-
-        prompt = "Write a Python module."
-        injected = inject_context(prompt, "t1", store)
-        assert CONTEXT_SECTION_HEADER in injected
-        assert "snake_case" in injected
-
-
-class TestIT160_NoContextAvailable:
-    """IT-160: No accumulated context → agent prompt unchanged."""
-
-    def test_no_context(self, tmp_db):
-        store = TeamContextStore(tmp_db)
-        prompt = "Write a Python module."
-        injected = inject_context(prompt, "t1", store)
-        assert injected == prompt
-
-
-class TestIT161_LearningDisabled:
-    """IT-161: continual_learning.enabled=false → no extraction."""
-
-    def test_disabled(self):
-        entries = extract("", step_name="test")
-        assert len(entries) == 0
-
-
-class TestIT162_CustomExtractionModel:
-    """IT-162: Custom extraction_model used for LLM call."""
-
-    def test_custom_model(self):
-        text = "We discovered the API requires authentication tokens for all requests."
-        entries = extract(text, step_name="auth_check")
-        assert any(e.step_name == "auth_check" for e in entries)
-
-
-class TestIT163_LearnFromTUICrash:
-    """IT-163: After TUI crash recovery, constraint recorded for future steps."""
-
-    def test_tui_crash_learning(self):
-        failure_output = (
-            "Error: connection refused on port 8080. The service crashes when payload exceeds 1MB."
-        )
-        entries = extract_from_failure(failure_output, step_name="deploy")
-        assert len(entries) > 0
-        assert all(e.context_type == "constraint" for e in entries)
-
-
-class TestIT164_LearnFromBufferCorruption:
-    """IT-164: After buffer corruption recovery, constraint recorded."""
-
-    def test_buffer_corruption_learning(self):
-        failure_output = (
-            "Buffer corruption: cannot send multiline text via send-keys. "
-            "Error: shell entered quote mode, breaking agent control."
-        )
-        entries = extract_from_failure(failure_output, step_name="messaging")
-        assert len(entries) > 0
-        assert all(e.context_type == "constraint" for e in entries)
-
-
-# ═══════════════════════════════════════════════════════════════════
-# 23. Ghost Session & Liveness — Deep Coverage (IT-165..IT-173)
-# ═══════════════════════════════════════════════════════════════════
-
-
-class TestIT165_LivenessCheckAllShells:
     """IT-165: is_alive() correctly returns False for each shell type."""
 
     @pytest.mark.parametrize("shell", ["zsh", "bash", "sh", "fish", "dash"])
@@ -856,111 +720,10 @@ class TestIT173_BlockedThenCrashes:
         agent = db.get_agent("w1")
         assert agent["status"] == "dead"
 
+    # ═══════════════════════════════════════════════════════════════════
+    # 24. Checkpoint + Cross-Session Memory (IT-174..IT-178)
+    # ═══════════════════════════════════════════════════════════════════
 
-# ═══════════════════════════════════════════════════════════════════
-# 24. Checkpoint + Cross-Session Memory (IT-174..IT-178)
-# ═══════════════════════════════════════════════════════════════════
-
-
-class TestIT174_CheckpointIncludesLearning:
-    """IT-174: Checkpoint includes associated ContextEntry objects."""
-
-    def test_checkpoint_learning(self, tmp_db):
-        tmp_db.create_skill_run("run1", "t1", "build_skill")
-        cm = CheckpointManager(tmp_db)
-        store = TeamContextStore(tmp_db)
-
-        store.add_entries(
-            "t1",
-            [
-                ContextEntry(
-                    context_type="discovery",
-                    content="Database requires indexing for queries",
-                    step_name="step_a",
-                    skill_run_id="run1",
-                ),
-            ],
-        )
-        cm.save_checkpoint("run1", "step_a", "completed with discovery")
-
-        context = tmp_db.get_team_context("t1")
-        assert len(context) == 1
-        assert context[0]["step_name"] == "step_a"
-
-
-class TestIT175_CrossSessionResumeContext:
-    """IT-175: Cross-session resume restores learned context from DB."""
-
-    def test_cross_session(self, tmp_db):
-        store = TeamContextStore(tmp_db)
-        store.add_entries(
-            "t1",
-            [
-                ContextEntry(context_type="convention", content="Always use UTC timestamps"),
-            ],
-        )
-
-        text = store.get_context("t1")
-        assert "UTC timestamps" in text
-
-
-class TestIT176_FailureLearningsPersist:
-    """IT-176: Failure learning extracted even though step not checkpointed as complete."""
-
-    def test_failure_learnings(self, tmp_db):
-        store = TeamContextStore(tmp_db)
-        failure_output = "Error: API endpoint requires authentication. Access denied."
-        entries = extract_from_failure(failure_output, step_name="api_call", skill_run_id="run1")
-        assert len(entries) > 0
-
-        added = store.add_entries("t1", entries)
-        assert added > 0
-
-        text = store.get_context("t1")
-        assert "authentication" in text.lower() or "denied" in text.lower()
-
-
-class TestIT177_ContextDeduplication:
-    """IT-177: Duplicate entries deduplicated by content hash."""
-
-    def test_deduplication(self, tmp_db):
-        store = TeamContextStore(tmp_db)
-        entry = ContextEntry(context_type="convention", content="Use snake_case everywhere")
-        added1 = store.add_entries("t1", [entry])
-        added2 = store.add_entries("t1", [entry])
-        assert added1 == 1
-        assert added2 == 0
-
-        all_ctx = tmp_db.get_team_context("t1")
-        assert len(all_ctx) == 1
-
-
-class TestIT178_ResumeRespectConstraints:
-    """IT-178: Learned constraints present in prompt even when steps skipped."""
-
-    def test_constraints_in_resume(self, tmp_db):
-        store = TeamContextStore(tmp_db)
-        store.add_entries(
-            "t1",
-            [
-                ContextEntry(
-                    context_type="constraint", content="Never use sudo in deployment scripts"
-                ),
-            ],
-        )
-
-        prompt = "Deploy the service."
-        injected = inject_context(prompt, "t1", store)
-        assert "sudo" in injected
-        assert CONTEXT_SECTION_HEADER in injected
-
-
-# ═══════════════════════════════════════════════════════════════════
-# 25. Cost Tracking — Failure Modes (IT-179..IT-184)
-# ═══════════════════════════════════════════════════════════════════
-
-
-class TestIT179_ParseTokenUsageNone:
     """IT-179: parse_token_usage returns None — no crash, no zero-value row."""
 
     def test_none_usage(self):

@@ -350,6 +350,10 @@ def team_monitor_cmd(ctx, team_id, idle_timeout, max_runtime):
     lead_agent_id = lead_agents[0]["id"] if lead_agents else None
     message_dir = root / "teams" / team_id / "messages"
 
+    from phalanx.costs.aggregator import CostAggregator
+
+    cost_aggregator = CostAggregator(db)
+
     click.echo(
         f"Team monitor started for {team_id} ({len(agents)} agents, "
         f"idle={effective_idle}s, max_runtime={effective_max_runtime}s)"
@@ -364,6 +368,8 @@ def team_monitor_cmd(ctx, team_id, idle_timeout, max_runtime):
         idle_timeout=effective_idle,
         lead_agent_id=lead_agent_id,
         message_dir=message_dir,
+        phalanx_root=root,
+        cost_aggregator=cost_aggregator,
     )
 
 

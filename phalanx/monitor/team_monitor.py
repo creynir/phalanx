@@ -10,6 +10,7 @@ Responsibilities:
 - Detect dead agents (tmux session gone)
 - Mark team dead when all agents are dead/suspended
 - Exit when team is fully dead
+- Parse token usage from stream logs and record to CostAggregator
 """
 
 from __future__ import annotations
@@ -19,12 +20,93 @@ import time
 from pathlib import Path
 
 from phalanx.comms.messaging import deliver_message
+from phalanx.costs.aggregator import CostAggregator
 from phalanx.db import StateDB
 from phalanx.monitor.heartbeat import HeartbeatMonitor
 from phalanx.monitor.stall import AgentState, StallDetector
 from phalanx.process.manager import ProcessManager
 
 logger = logging.getLogger(__name__)
+
+
+class _StreamLogCostScanner:
+    """Incrementally scans stream.log files for token usage lines.
+
+    Tracks a read offset per agent so each chunk of new output is parsed
+    exactly once — no double-counting across monitor poll cycles.
+    """
+
+    def __init__(self) -> None:
+        self._offsets: dict[str, int] = {}
+
+    def scan(
+        self,
+        agent_id: str,
+        stream_log: Path,
+        backend_name: str,
+        aggregator: CostAggregator,
+        team_id: str,
+        role: str,
+        model: str | None,
+    ) -> None:
+        """Read new bytes from stream_log and record any token usage found."""
+        from phalanx.backends import get_backend
+
+        if not stream_log.exists():
+            return
+
+        try:
+            file_size = stream_log.stat().st_size
+        except OSError:
+            return
+
+        offset = self._offsets.get(agent_id, 0)
+        if file_size <= offset:
+            return
+
+        try:
+            with open(stream_log, "rb") as fh:
+                fh.seek(offset)
+                new_bytes = fh.read(file_size - offset)
+            self._offsets[agent_id] = file_size
+        except OSError:
+            return
+
+        try:
+            new_text = new_bytes.decode("utf-8", errors="replace")
+        except Exception:
+            return
+
+        try:
+            backend = get_backend(backend_name)
+        except Exception:
+            return
+
+        for line in new_text.splitlines():
+            try:
+                usage = backend.parse_token_usage(line)
+            except Exception:
+                continue
+            if usage is None:
+                continue
+
+            input_tokens = int(usage.get("input_tokens") or usage.get("tokens") or 0)
+            output_tokens = int(usage.get("output_tokens") or 0)
+
+            if input_tokens > 0 or output_tokens > 0:
+                aggregator.record_usage(
+                    team_id=team_id,
+                    agent_id=agent_id,
+                    role=role,
+                    backend=backend_name,
+                    model=model,
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                )
+
+    def reset(self, agent_id: str) -> None:
+        """Reset offset for an agent (e.g., after restart)."""
+        self._offsets.pop(agent_id, None)
 
 
 def run_team_monitor(
@@ -38,12 +120,15 @@ def run_team_monitor(
     lead_agent_id: str | None = None,
     message_dir: Path | None = None,
     phalanx_root: Path | None = None,
+    cost_aggregator: CostAggregator | None = None,
 ) -> None:
     """Blocking loop that monitors all agents in a team.
 
     Runs until all agents are in a terminal state (dead/suspended/failed).
     """
     logger.info("Team monitor started for %s (poll=%ds)", team_id, poll_interval)
+
+    _cost_scanner = _StreamLogCostScanner()
 
     while True:
         try:
@@ -96,7 +181,25 @@ def run_team_monitor(
                     stream_log = proc.stream_log
                     if heartbeat_monitor.get_state(agent_id) is None:
                         heartbeat_monitor.register(agent_id, stream_log)
+                    # Reset cost scanner offset so resumed agents are re-scanned
+                    _cost_scanner.reset(agent_id)
                     logger.info("Re-discovered resumed agent %s", agent_id)
+
+            # Scan stream.log for new token usage lines (cost tracking).
+            # Uses the ProcessManager's tracked stream_log path so we always
+            # read the same file the heartbeat monitor watches.
+            if cost_aggregator is not None:
+                proc = process_manager.get_process(agent_id)
+                if proc is not None:
+                    _cost_scanner.scan(
+                        agent_id=agent_id,
+                        stream_log=proc.stream_log,
+                        backend_name=agent.get("backend") or "cursor",
+                        aggregator=cost_aggregator,
+                        team_id=team_id,
+                        role=agent.get("role") or "worker",
+                        model=agent.get("model"),
+                    )
 
             try:
                 event = stall_detector.check_agent(agent_id)
@@ -128,7 +231,9 @@ def run_team_monitor(
                             message_dir,
                             "worker_escalation",
                             agent_id,
-                            detail="agent wrote escalation artifact — outer loop intervention needed",
+                            detail=(
+                                "agent wrote escalation artifact — outer loop intervention needed"
+                            ),
                         )
 
                 if event is None:
