@@ -33,3 +33,21 @@ hello.py
 
 # Research, plans, and agent output collector
 .agora/
+
+# Pipeline artifacts and worktrees
+.artifacts/
+.worktrees/
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# OS files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
