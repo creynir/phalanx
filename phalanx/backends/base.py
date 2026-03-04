@@ -68,3 +68,7 @@ class AgentBackend(ABC):
         Default is 0 (no delay). Backends that need staggering override this.
         """
         return 0.0
+
+    def interrupt_sequence(self) -> list[str]:
+        """List of tmux keys to send to interrupt the agent and return to prompt."""
+        return ["C-c", "C-c"]

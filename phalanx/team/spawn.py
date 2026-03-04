@@ -22,33 +22,6 @@ from phalanx.process.manager import AgentProcess, ProcessManager
 logger = logging.getLogger(__name__)
 
 
-def _create_agent_worktree(
-    repo_path: Path,
-    team_id: str,
-    agent_id: str,
-) -> Path | None:
-    """Create a git worktree for an agent and return its path.
-
-    If the repo path is not a git repository or worktree creation fails,
-    logs a warning and returns None so spawning continues without isolation.
-    """
-    from phalanx.process.worktree import create_worktree
-
-    name = f"{team_id}-{agent_id}"
-    try:
-        wt_path = create_worktree(repo_path, name)
-        logger.info("Created worktree %s for agent %s", wt_path, agent_id)
-        return wt_path
-    except Exception as e:
-        logger.warning(
-            "Failed to create worktree for agent %s (repo=%s): %s — spawning without isolation",
-            agent_id,
-            repo_path,
-            e,
-        )
-        return None
-
-
 def spawn_agent(
     phalanx_root: Path,
     db: StateDB,
@@ -82,12 +55,6 @@ def spawn_agent(
 
     effective_worktree: str | None = worktree
     effective_working_dir: str | None = working_dir
-    if worktree:
-        repo_path = phalanx_root.parent
-        wt_path = _create_agent_worktree(repo_path, team_id, agent_id)
-        if wt_path is not None:
-            effective_worktree = str(wt_path)
-            effective_working_dir = str(wt_path)
 
     soul_file = _resolve_soul_file(phalanx_root, role)
 
