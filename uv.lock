@@ -186,7 +186,7 @@ wheels = [
 
 [[package]]
 name = "phalanx-cli"
-version = "0.3.9"
+version = "1.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "click" },
