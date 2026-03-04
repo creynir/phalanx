@@ -2,6 +2,10 @@
 Concrete block implementations for workflow composition.
 """
 
+import asyncio
+import json
+from typing import List
+
 from phalanx_core.blocks.base import BaseBlock
 from phalanx_core.state import WorkflowState
 from phalanx_core.primitives import Soul
@@ -59,6 +63,70 @@ class LinearBlock(BaseBlock):
                 "messages": state.messages
                 + [
                     {"role": "system", "content": f"[Block {self.block_id}] Completed: {truncated}"}
+                ],
+            }
+        )
+
+
+class FanOutBlock(BaseBlock):
+    """
+    Executes the current task with multiple agents in parallel.
+
+    Typical Use: Gather diverse perspectives (3 reviewers critique a proposal).
+    Output Format: JSON list [{"soul_id": "...", "output": "..."}, ...]
+    """
+
+    def __init__(self, block_id: str, souls: List[Soul], runner: PhalanxTeamRunner):
+        """
+        Args:
+            block_id: Unique block identifier.
+            souls: List of agents to run in parallel (must be non-empty).
+            runner: Execution engine for running tasks.
+
+        Raises:
+            ValueError: If block_id is empty or souls list is empty.
+        """
+        super().__init__(block_id)
+        if not souls:
+            raise ValueError(f"FanOutBlock {block_id}: souls list cannot be empty")
+        self.souls = souls
+        self.runner = runner
+
+    async def execute(self, state: WorkflowState) -> WorkflowState:
+        """
+        Execute state.current_task in parallel across all souls.
+
+        Args:
+            state: Must have state.current_task set.
+
+        Returns:
+            New state with:
+            - results[block_id] = JSON list of {"soul_id": str, "output": str}
+            - messages appended with fanout summary
+
+        Raises:
+            ValueError: If state.current_task is None.
+            Exception: If ANY soul execution fails, entire block fails (all-or-nothing).
+        """
+        if state.current_task is None:
+            raise ValueError(f"FanOutBlock {self.block_id}: state.current_task is None")
+
+        # Execute all souls in parallel (preserves order)
+        tasks = [self.runner.execute_task(state.current_task, soul) for soul in self.souls]
+        results = await asyncio.gather(*tasks)  # Raises on first failure
+
+        # Aggregate outputs as JSON
+        outputs = [{"soul_id": result.soul_id, "output": result.output} for result in results]
+
+        return state.model_copy(
+            update={
+                "results": {**state.results, self.block_id: json.dumps(outputs, indent=2)},
+                "messages": state.messages
+                + [
+                    {
+                        "role": "system",
+                        "content": f"[Block {self.block_id}] FanOut completed with {len(self.souls)} agents",
+                    }
                 ],
             }
         )
