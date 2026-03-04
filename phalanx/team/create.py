@@ -19,6 +19,20 @@ from phalanx.team.spawn import spawn_agent
 logger = logging.getLogger(__name__)
 
 
+def _create_agent_worktree(repo_path: Path, team_id: str, agent_id: str) -> Path | None:
+    """Create a git worktree for an agent. Returns the path or None on failure."""
+    from phalanx.process.worktree import create_worktree
+
+    name = f"{team_id}-{agent_id}"
+    try:
+        wt_path = create_worktree(repo_path, name)
+        logger.info("Created worktree for agent %s at %s", agent_id, wt_path)
+        return wt_path
+    except Exception as e:
+        logger.warning("Failed to create worktree for agent %s: %s", agent_id, e)
+        return None
+
+
 def parse_agents_spec(spec: str) -> list[tuple[str, int]]:
     """Parse agent spec like 'researcher,coder:2,reviewer' into [(role, count)]."""
     agents = []
@@ -146,13 +160,21 @@ def create_team(
     team_dir = phalanx_root / "teams" / team_id
     team_dir.mkdir(parents=True, exist_ok=True)
 
+    repo_path = phalanx_root.parent if phalanx_root.name == ".phalanx" else Path.cwd()
+
     worker_specs = parse_agents_spec(agents_spec)
     worker_index = 0
     for role, count in worker_specs:
         for _ in range(count):
             worker_id = f"w{worker_index}-{role}-{uuid.uuid4().hex[:8]}"
             resolved_model = resolve_model(backend_name, role, model)
-            worker_worktree = f".phalanx/worktrees/{team_id}/{worker_id}" if worktree else None
+            worker_worktree: str | None = None
+            worker_working_dir: str | None = None
+            if worktree:
+                wt_path = _create_agent_worktree(repo_path, team_id, worker_id)
+                if wt_path is not None:
+                    worker_worktree = str(wt_path)
+                    worker_working_dir = str(wt_path)
             spawn_agent(
                 phalanx_root=phalanx_root,
                 db=db,
@@ -167,11 +189,18 @@ def create_team(
                 auto_approve=auto_approve,
                 config=config,
                 worktree=worker_worktree,
+                working_dir=worker_working_dir,
             )
             worker_index += 1
 
     lead_model = resolve_model(backend_name, "lead", model)
-    lead_worktree = f".phalanx/worktrees/{team_id}/{lead_id}" if worktree else None
+    lead_worktree: str | None = None
+    lead_working_dir: str | None = None
+    if worktree:
+        wt_path = _create_agent_worktree(repo_path, team_id, lead_id)
+        if wt_path is not None:
+            lead_worktree = str(wt_path)
+            lead_working_dir = str(wt_path)
     spawn_agent(
         phalanx_root=phalanx_root,
         db=db,
@@ -186,6 +215,7 @@ def create_team(
         auto_approve=auto_approve,
         config=config,
         worktree=lead_worktree,
+        working_dir=lead_working_dir,
     )
 
     _spawn_team_monitor(phalanx_root, team_id, idle_timeout=idle_timeout, max_runtime=max_runtime)

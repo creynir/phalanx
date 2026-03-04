@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass
+from typing import Callable
 
 from phalanx.monitor.heartbeat import HeartbeatMonitor
 from phalanx.monitor.stall import AgentState, StallDetector
@@ -50,8 +51,8 @@ def run_monitor_loop(
     max_retries: int = 3,
     max_runtime: int = 1800,
     poll_interval: int = MONITOR_POLL_INTERVAL,
-    on_blocked: callable | None = None,
-    on_stall: callable | None = None,
+    on_blocked: "Callable | None" = None,
+    on_stall: "Callable | None" = None,
 ) -> MonitorResult:
     """Blocking DEM-style monitoring loop for a single agent.
 

@@ -10,6 +10,10 @@ import logging
 import shutil
 import time
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from phalanx.db import StateDB
 
 logger = logging.getLogger(__name__)
 
@@ -26,8 +30,8 @@ def _kill_monitor_session(team_id: str) -> None:
         session = server.sessions.get(session_name=session_name)
         session.kill()
         logger.info("GC: killed monitor session %s", session_name)
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("GC: failed to kill monitor session %s: %s", session_name, e)
 
 
 def _cleanup_worktrees(team_id: str) -> None:
@@ -54,7 +58,7 @@ def _cleanup_worktrees(team_id: str) -> None:
 
 def run_gc(
     phalanx_root: Path,
-    db=None,
+    db: "StateDB | None" = None,
     max_age_hours: int = DEFAULT_GC_HOURS,
 ) -> list[str]:
     """Delete dead teams older than max_age_hours.

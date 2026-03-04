@@ -13,6 +13,10 @@ from __future__ import annotations
 import logging
 import re
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from phalanx.db import StateDB
 
 from phalanx.process.manager import ProcessManager
 
@@ -51,7 +55,7 @@ def deliver_message(
 
 def broadcast_message(
     process_manager: ProcessManager,
-    db,
+    db: "StateDB",
     team_id: str,
     message: str,
     exclude_agent_id: str | None = None,

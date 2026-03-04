@@ -41,16 +41,20 @@ def spawn_agent(
     """Spawn an agent in TUI mode with full setup.
 
     1. Generate agent ID
-    2. Load and inject soul file
-    3. Write task file for long prompts
-    4. Create DB record
-    5. Spawn tmux session with pipe-pane
-    6. Register heartbeat monitor
+    2. Create git worktree (if --worktree flag was set)
+    3. Load and inject soul file
+    4. Write task file for long prompts
+    5. Create DB record
+    6. Spawn tmux session with pipe-pane
+    7. Register heartbeat monitor
     """
     if agent_id is None:
         agent_id = f"{role}-{uuid.uuid4().hex[:8]}"
 
     backend = get_backend(backend_name)
+
+    effective_worktree: str | None = worktree
+    effective_working_dir: str | None = working_dir
 
     soul_file = _resolve_soul_file(phalanx_root, role)
 
@@ -62,10 +66,10 @@ def spawn_agent(
             agent_id=agent_id,
             backend=backend,
             prompt=str(task_file),
-            soul_file=None,  # soul is already merged into task_file
+            soul_file=None,
             model=model,
-            worktree=worktree,
-            working_dir=working_dir,
+            worktree=effective_worktree,
+            working_dir=effective_working_dir,
             auto_approve=auto_approve,
         )
     except Exception:
@@ -79,7 +83,7 @@ def spawn_agent(
         role=role,
         model=model,
         backend=backend_name,
-        worktree=worktree,
+        worktree=effective_worktree,
     )
 
     db.update_agent(agent_id, status="running", pid=os.getpid())
@@ -138,7 +142,11 @@ def _write_task_file(
             merged = f"{soul_content}\n\n---\n\n{task}"
         # Prepend a hard imperative so the very first token the agent sees is
         # an action verb, not a document to read and summarise.
-        merged = f"Execute the following task immediately without summarising or asking questions:\n\n{merged}"
+        merged = (
+            "Execute the following task immediately "
+            "without summarising or asking questions:"
+            f"\n\n{merged}"
+        )
     else:
         merged = task
 
@@ -154,6 +162,12 @@ _SOUL_FILE_MAP = {
 
 def _resolve_soul_file(phalanx_root: Path, role: str) -> Path | None:
     """Find the appropriate soul file for the role."""
+    if role not in _SOUL_FILE_MAP and role != "worker":
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "No specific soul file for role '%s', falling back to worker.md", role
+        )
     filename = _SOUL_FILE_MAP.get(role, "worker.md")
 
     soul_dir = phalanx_root / "soul"

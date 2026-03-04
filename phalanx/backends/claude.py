@@ -43,6 +43,9 @@ class ClaudeBackend(AgentBackend):
     def build_resume_command(self, chat_id: str) -> list[str]:
         return [self.binary_name(), "--continue", chat_id]
 
+    def interrupt_sequence(self) -> list[str]:
+        return ["Escape", "C-c"]
+
     def parse_chat_id(self, output: str) -> str | None:
         for line in output.splitlines():
             line = line.strip()

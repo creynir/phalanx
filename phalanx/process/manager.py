@@ -400,12 +400,12 @@ class ProcessManager:
             logger.warning("Agent %s has no active pane for interrupt", agent_id)
             return False
 
-        # Send Ctrl+C twice
-        pane.send_keys("Escape", enter=False)  # claude uses esc to interrupt!
-        time.sleep(0.3)
-        pane.send_keys("C-c", enter=False)
+        seq = proc.backend.interrupt_sequence() if proc else ["C-c", "C-c"]
+        for key in seq:
+            pane.send_keys(key, enter=False)
+            time.sleep(0.3)
 
-        logger.info("Sent C-c C-c to agent %s, waiting for prompt...", agent_id)
+        logger.info("Sent %s to agent %s, waiting for prompt...", " ".join(seq), agent_id)
 
         # Wait for the prompt to return
         deadline = time.time() + INTERRUPT_WAIT_SECONDS

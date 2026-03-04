@@ -347,15 +347,6 @@ class StallDetector:
         # Agent is running normally
         return None
 
-    def check_all(self) -> list[StallEvent]:
-        """Check all registered agents. Returns list of events."""
-        events = []
-        for agent_id in list(self._hb._states.keys()):
-            event = self.check_agent(agent_id)
-            if event:
-                events.append(event)
-        return events
-
     def get_blocked_prompt(self, agent_id: str) -> PromptDetection | None:
         """Get the prompt detection for a blocked agent."""
         return self._blocked_agents.get(agent_id)
