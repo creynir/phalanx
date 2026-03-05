@@ -220,6 +220,7 @@ async def test_step_state_flows_through_phases(mock_runner, sample_soul):
     assert result_state.results["linear1"] == "Block output"
 
 
+@pytest.mark.asyncio
 async def test_skill_runs_blueprint() -> None:
     """
     Test that Skill wraps Blueprint, run() delegates to blueprint.run(), and returns final state.

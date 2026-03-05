@@ -1,5 +1,5 @@
 from typing import Any, AsyncGenerator, Dict, List, Optional
-from litellm import acompletion
+from litellm import acompletion  # type: ignore[import-not-found]
 from pydantic import BaseModel
 
 

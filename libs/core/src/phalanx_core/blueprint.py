@@ -170,7 +170,9 @@ class Blueprint:
                     current = node
                     while current != neighbor:
                         cycle_path.append(current)
-                        current = parent[current]
+                        parent_node = parent[current]
+                        assert parent_node is not None, "Parent must exist in cycle path"
+                        current = parent_node
                     cycle_path.append(neighbor)
                     return list(reversed(cycle_path))
                 elif color[neighbor] == WHITE:
