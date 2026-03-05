@@ -40,6 +40,6 @@ class BaseBlock(ABC):
 
         Raises:
             ValueError: If required inputs are missing from state.
-            Exception: If execution fails (propagates to Blueprint.run() caller).
+            Exception: If execution fails (propagates to Workflow.run() caller).
         """
         pass
