@@ -771,7 +771,7 @@ class MessageBusBlock(BaseBlock):
             # Step 4: Sequential contributions within round
             for soul in self.souls:
                 # Context passing mechanism
-                # Construct task by appending formatted contributions to current_task.instruction
+                # Construct action by appending formatted contributions to current_action.instruction
                 if round_contributions:
                     # Format prior contributions in THIS round
                     formatted_context = "\n\n".join(
@@ -829,7 +829,7 @@ class RouterBlock(BaseBlock):
     Evaluate routing condition using Soul (LLM) or Callable (function).
 
     Supports two evaluation modes:
-    1. Soul evaluator: LLM decides based on current_task
+    1. Soul evaluator: LLM decides based on current_action
     2. Callable evaluator: Function evaluates state programmatically
 
     Typical Use: Decision points in workflows (approve/reject, route selection).
@@ -927,7 +927,7 @@ class PlaceholderBlock(BaseBlock):
     Echo block for dynamic injection fallback.
 
     Stores description in state.results[block_id] and appends one system
-    message. Requires no current_task. Does not modify shared_memory or metadata.
+    message. Requires no current_action. Does not modify shared_memory or metadata.
 
     Typical Use: Fallback when BlockRegistry has no factory for an injected step_id.
     """
