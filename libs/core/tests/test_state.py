@@ -14,6 +14,8 @@ def test_workflow_state_initialization():
     assert state.current_task is None
     assert state.results == {}
     assert state.metadata == {}
+    assert state.total_cost_usd == 0.0
+    assert state.total_tokens == 0
 
 
 def test_workflow_state_with_task():
@@ -38,7 +40,15 @@ def test_workflow_state_immutability():
 def test_workflow_state_model_fields():
     """Verify required fields exist (AC-2)."""
     fields = set(WorkflowState.model_fields.keys())
-    required = {"messages", "shared_memory", "current_task", "results", "metadata"}
+    required = {
+        "messages",
+        "shared_memory",
+        "current_task",
+        "results",
+        "metadata",
+        "total_cost_usd",
+        "total_tokens",
+    }
     assert required.issubset(fields)
 
 
@@ -51,6 +61,8 @@ def test_workflow_state_with_all_fields():
         current_task=task,
         results={"block1": "output1"},
         metadata={"blueprint_name": "test_blueprint"},
+        total_cost_usd=0.05,
+        total_tokens=100,
     )
 
     assert len(state.messages) == 1
@@ -59,17 +71,25 @@ def test_workflow_state_with_all_fields():
     assert state.current_task.id == "t1"
     assert state.results["block1"] == "output1"
     assert state.metadata["blueprint_name"] == "test_blueprint"
+    assert state.total_cost_usd == 0.05
+    assert state.total_tokens == 100
 
 
 def test_workflow_state_model_copy_preserves_other_fields():
     """Verify model_copy with update preserves other fields."""
-    state1 = WorkflowState(results={"a": "output1"}, metadata={"key": "value"})
+    state1 = WorkflowState(
+        results={"a": "output1"}, metadata={"key": "value"}, total_cost_usd=0.01, total_tokens=50
+    )
     state2 = state1.model_copy(update={"results": {"a": "output1", "b": "output2"}})
 
     # Original state unchanged
     assert state1.results == {"a": "output1"}
     assert state1.metadata == {"key": "value"}
+    assert state1.total_cost_usd == 0.01
+    assert state1.total_tokens == 50
 
     # New state has updates and preserves metadata
     assert state2.results == {"a": "output1", "b": "output2"}
     assert state2.metadata == {"key": "value"}
+    assert state2.total_cost_usd == 0.01
+    assert state2.total_tokens == 50

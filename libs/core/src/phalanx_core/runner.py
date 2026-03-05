@@ -14,6 +14,8 @@ class ExecutionResult(BaseModel):
     soul_id: str
     output: str
     metadata: Dict[str, Any] = {}
+    cost_usd: float = 0.0
+    total_tokens: int = 0
 
 
 class PhalanxTeamRunner:
@@ -32,7 +34,13 @@ class PhalanxTeamRunner:
 
         response = await self.llm_client.achat(messages=messages, system_prompt=soul.system_prompt)
 
-        return ExecutionResult(task_id=task.id, soul_id=soul.id, output=response)
+        return ExecutionResult(
+            task_id=task.id,
+            soul_id=soul.id,
+            output=response["content"],
+            cost_usd=response["cost_usd"],
+            total_tokens=response["total_tokens"],
+        )
 
     async def stream_task(self, task: Task, soul: Soul) -> AsyncGenerator[str, None]:
         """

@@ -18,7 +18,11 @@ def sample_task():
 @pytest.mark.asyncio
 @patch("phalanx_core.runner.LiteLLMClient.achat")
 async def test_execute_task(mock_achat, sample_soul, sample_task):
-    mock_achat.return_value = "Hello!"
+    mock_achat.return_value = {
+        "content": "Hello!",
+        "cost_usd": 0.001,
+        "total_tokens": 10,
+    }
 
     runner = PhalanxTeamRunner(model_name="test-model")
     result = await runner.execute_task(sample_task, sample_soul)
@@ -27,6 +31,8 @@ async def test_execute_task(mock_achat, sample_soul, sample_task):
     assert result.task_id == "test_task"
     assert result.soul_id == "test_soul"
     assert result.output == "Hello!"
+    assert result.cost_usd == 0.001
+    assert result.total_tokens == 10
 
     mock_achat.assert_called_once()
     kwargs = mock_achat.call_args.kwargs

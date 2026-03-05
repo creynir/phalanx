@@ -37,3 +37,11 @@ class WorkflowState(BaseModel):
         default_factory=dict,
         description="Workflow-level tracking: execution_start_time, blueprint_name, etc.",
     )
+    total_cost_usd: float = Field(
+        default=0.0,
+        description="Cumulative cost in USD for all LLM calls in the workflow.",
+    )
+    total_tokens: int = Field(
+        default=0,
+        description="Cumulative token count for all LLM calls in the workflow.",
+    )

@@ -1,5 +1,5 @@
 from typing import Any, AsyncGenerator, Dict, List, Optional
-from litellm import acompletion  # type: ignore[import-not-found]
+from litellm import acompletion
 from pydantic import BaseModel
 
 
@@ -53,10 +53,13 @@ class LiteLLMClient:
         system_prompt: Optional[str] = None,
         temperature: float = 0.7,
         **kwargs: Any,
-    ) -> str:
+    ) -> Dict[str, Any]:
         """
         Get the full response from the LLM without streaming.
+        Returns a dict with keys: content, cost_usd, total_tokens
         """
+        from litellm import completion_cost
+
         formatted_messages = []
         if system_prompt:
             formatted_messages.append({"role": "system", "content": system_prompt})
@@ -71,6 +74,23 @@ class LiteLLMClient:
             **kwargs,
         )
 
+        content = ""
         if response.choices and len(response.choices) > 0:
-            return response.choices[0].message.content or ""
-        return ""
+            content = response.choices[0].message.content or ""
+
+        # Calculate cost using litellm
+        cost_usd = completion_cost(
+            completion_response=response,
+            model=self.model_name,
+        )
+
+        # Extract total tokens from usage
+        total_tokens = 0
+        if hasattr(response, "usage") and response.usage:
+            total_tokens = response.usage.total_tokens
+
+        return {
+            "content": content,
+            "cost_usd": cost_usd,
+            "total_tokens": total_tokens,
+        }
