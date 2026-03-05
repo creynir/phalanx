@@ -105,8 +105,8 @@ Phase 1.4 exposes the Phalanx execution engine to the outside world through thre
 **Context:** We want external AIs (like Cursor) to use Phalanx. If we expose an MCP tool `phalanx_create_block` that accepts raw Python code, a hallucinating AI could inject malware/arbitrary code into the local machine.  
 **Decision:**  
 - **Read & Run (Safe):** We expose tools to list and run existing workflows (`phalanx_run_workflow`).
-- **Create YAML (Moderate):** We expose a tool to create new Souls or Workflows *as YAML files* in the `custom/` directory (`phalanx_create_soul`, `phalanx_create_workflow`). This is safe because the YAML parser is sandboxed and declarative.
-- **Create Python Blocks (Dangerous):** We will **NOT** expose an MCP tool for external AIs to write raw Python `BaseBlock` code dynamically in this phase. Code generation must remain an explicit developer action until we build a sandboxed execution environment (Phase 2).
+- **Create YAML Assets (Moderate):** We expose a tool to create new Souls, Tasks, or Workflows *as YAML files* in the `custom/` directory (`phalanx_create_soul`, `phalanx_create_workflow`, `phalanx_create_task`). This is safe because the YAML parser is sandboxed and declarative.
+- **Create Python Blocks (Dangerous):** We will **NOT** expose an MCP tool for external AIs to write raw Python `BaseBlock` code dynamically in this phase. Code generation must remain an explicit developer action (e.g., you typing in Cursor, not Cursor autonomously calling an MCP tool to write Python) until we build a sandboxed execution environment (Phase 2).
 
 ---
 
@@ -282,6 +282,8 @@ workspace/
 │   │   └── vendor_block.py
 │   ├── souls/
 │   │   └── specialized_coder.yaml # Custom soul definitions
+│   ├── tasks/
+│   │   └── common_instructions.yaml # Reusable task definitions
 │   └── workflows/
 │       └── research_review.yaml  # Auto-discovered workflows
 └── phalanx.yaml          # Optional: config, custom_dir path
@@ -294,21 +296,25 @@ workspace/
 #### 3.2.2 Discovery Algorithm
 
 ```
-Algorithm: discover_custom_assets(custom_dir) → (BlockRegistry, Dict[str, Soul], Dict[str, Workflow])
+Algorithm: discover_custom_assets(custom_dir) → (BlockRegistry, Dict[str, Soul], Dict[str, Task], Dict[str, Workflow])
 ──────────────────────────────────────────────────────────
 1. registry = BlockRegistry()
 2. souls_map = load_built_in_souls()
-3. workflows_map = {}
-4. Blocks: For each .py file in custom_dir/blocks/ (recursive):
+3. tasks_map = {}
+4. workflows_map = {}
+5. Blocks: For each .py file in custom_dir/blocks/ (recursive):
    a. Import module, find BaseBlock subclasses
    b. registry.register(block_id, factory)
-5. Souls: For each .yaml/.md file in custom_dir/souls/:
+6. Souls: For each .yaml/.md file in custom_dir/souls/:
    a. Parse YAML, validate into Soul primitive
    b. souls_map[soul.id] = soul
-6. Workflows: For each .yaml file in custom_dir/workflows/:
-   a. Parse using workflow parser, injecting registry and souls_map
+7. Tasks: For each .yaml file in custom_dir/tasks/:
+   a. Parse YAML, validate into Task primitive
+   b. tasks_map[task.id] = task
+8. Workflows: For each .yaml file in custom_dir/workflows/:
+   a. Parse using workflow parser, injecting registry, souls_map, and tasks_map
    b. workflows_map[workflow.name] = workflow
-7. RETURN (registry, souls_map, workflows_map)
+9. RETURN (registry, souls_map, tasks_map, workflows_map)
 ```
 
 #### 3.2.3 BlockRegistry Factory Signature
