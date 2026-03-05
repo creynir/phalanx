@@ -122,7 +122,7 @@ async def test_retry_advisor_recovery(mock_runner, team_lead_soul):
     AC-1: Integration test: RetryBlock exhausts retries, TeamLeadBlock reads retry_errors
     and produces recommendation. Demonstrates error recovery workflow pattern.
 
-    AC-2: Integration uses Blueprint to handle exception from RetryBlock and route to TeamLeadBlock.
+    AC-2: Integration uses Workflow to handle exception from RetryBlock and route to TeamLeadBlock.
     AC-3: TeamLeadBlock's failure_context_keys includes '{retry_id}_retry_errors'.
     AC-4: Final state contains advisor recommendation in results.
     AC-5: Test demonstrates error recovery workflow pattern.
@@ -154,7 +154,7 @@ async def test_retry_advisor_recovery(mock_runner, team_lead_soul):
     )
 
     # Setup: Create workflow with error handling workflow
-    # Note: We manually orchestrate retry -> advisor since Blueprint doesn't support
+    # Note: We manually orchestrate retry -> advisor since Workflow doesn't support
     # exception handling transitions (that would be over-engineering for Phase 1.2)
     task = Task(id="main_task", instruction="Process API request")
     state = WorkflowState(current_task=task)
@@ -245,9 +245,9 @@ async def test_retry_advisor_recovery(mock_runner, team_lead_soul):
 @pytest.mark.asyncio
 async def test_retry_advisor_with_workflow_orchestration(mock_runner, team_lead_soul):
     """
-    AC-2: Demonstrate using Blueprint to orchestrate retry failure → advisor analysis.
+    AC-2: Demonstrate using Workflow to orchestrate retry failure → advisor analysis.
 
-    Note: Since Blueprint doesn't support exception-based transitions (deferred to Phase 2),
+    Note: Since Workflow doesn't support exception-based transitions (deferred to Phase 2),
     this test shows how to manually orchestrate the pattern. In production, users would
     wrap RetryBlock execution in try/except and conditionally execute TeamLeadBlock.
     """
@@ -494,7 +494,7 @@ async def test_messagebus_router_workflow(mock_runner, sample_souls):
     - MessageBusBlock produces consensus in shared_memory
     - RouterBlock reads consensus via callable evaluator from shared_memory
     - Final state contains both messagebus transcript and router decision
-    - Uses real Workflow execution without mocks (Blueprint.add_block, Blueprint.run)
+    - Uses real Workflow execution without mocks (Workflow.add_block, Workflow.run)
     """
     # Setup mock responses for MessageBusBlock (2 souls × 2 iterations = 4 calls)
     call_count = [0]
@@ -511,7 +511,7 @@ async def test_messagebus_router_workflow(mock_runner, sample_souls):
 
     mock_runner.execute_task.side_effect = create_messagebus_result
 
-    # Build Blueprint with MessageBusBlock → RouterBlock
+    # Build Workflow with MessageBusBlock → RouterBlock
     bp = Workflow("messagebus_router_workflow")
 
     # Create MessageBusBlock with 2 souls, 2 iterations
@@ -541,7 +541,7 @@ async def test_messagebus_router_workflow(mock_runner, sample_souls):
 
     # Validate workflow
     errors = bp.validate()
-    assert errors == [], f"Blueprint validation failed: {errors}"
+    assert errors == [], f"Workflow validation failed: {errors}"
 
     # Execute workflow
     initial_state = WorkflowState(
@@ -608,7 +608,7 @@ async def test_retry_advisor_recovery_workflow(mock_runner, sample_souls):
         runner=mock_runner,
     )
 
-    # Build Blueprint: RetryBlock → TeamLeadBlock
+    # Build Workflow: RetryBlock → TeamLeadBlock
     bp = Workflow("retry_advisor_workflow")
     bp.add_block(retry_block).add_block(advisor_block)
     bp.add_transition("retry1", "advisor1").add_transition("advisor1", None)
@@ -645,7 +645,7 @@ async def test_retry_advisor_recovery_workflow(mock_runner, sample_souls):
         runner=mock_runner,
     )
 
-    # Build Blueprint: RetryBlock → TeamLeadBlock
+    # Build Workflow: RetryBlock → TeamLeadBlock
     bp2 = Workflow("retry_advisor_recovery_workflow")
     bp2.add_block(retry_block_recovering).add_block(advisor_block2)
     bp2.add_transition("retry2", "advisor2").add_transition("advisor2", None)
@@ -709,7 +709,7 @@ async def test_messagebus_router_with_soul_evaluator(mock_runner, sample_souls):
 
     mock_runner.execute_task.side_effect = create_result
 
-    # Build Blueprint
+    # Build Workflow
     bp = Workflow("messagebus_router_soul_workflow")
 
     messagebus_block = MessageBusBlock(

@@ -434,11 +434,11 @@ async def test_four_block_error_recovery_workflow(mock_runner, test_souls):
 @pytest.mark.asyncio
 async def test_workflow_integration_with_all_advanced_blocks(mock_runner, test_souls):
     """
-    Blueprint-level integration test with MessageBus and Router.
+    Workflow-level integration test with MessageBus and Router.
 
     Verifies:
-    - Blueprint correctly orchestrates MessageBus → Router transition
-    - State flows correctly through Blueprint.run()
+    - Workflow correctly orchestrates MessageBus → Router transition
+    - State flows correctly through Workflow.run()
     - All blocks execute in correct order
     """
     mock_runner.execute_task.side_effect = [
@@ -446,7 +446,7 @@ async def test_workflow_integration_with_all_advanced_blocks(mock_runner, test_s
         ExecutionResult(task_id="t2", soul_id="agent2", output="Consensus item 2"),
     ]
 
-    # Build Blueprint
+    # Build Workflow
     bp = Workflow("integration_test")
 
     messagebus = MessageBusBlock(
@@ -465,7 +465,7 @@ async def test_workflow_integration_with_all_advanced_blocks(mock_runner, test_s
 
     # Validate and execute
     errors = bp.validate()
-    assert errors == [], f"Blueprint validation failed: {errors}"
+    assert errors == [], f"Workflow validation failed: {errors}"
 
     initial_state = WorkflowState(current_task=Task(id="task6", instruction="Run integration"))
     final_state = await bp.run(initial_state)
