@@ -8,8 +8,7 @@ from pydantic import BaseModel, Field
 if TYPE_CHECKING:
     from phalanx_core.blocks.base import BaseBlock
     from phalanx_core.blueprint import Blueprint
-
-from phalanx_core.state import WorkflowState
+    from phalanx_core.state import WorkflowState
 
 
 class Soul(BaseModel):
@@ -52,8 +51,8 @@ class Step:
     def __init__(
         self,
         block: "BaseBlock",
-        pre_hook: Optional[Callable[[WorkflowState], WorkflowState]] = None,
-        post_hook: Optional[Callable[[WorkflowState], WorkflowState]] = None,
+        pre_hook: Optional[Callable[["WorkflowState"], "WorkflowState"]] = None,
+        post_hook: Optional[Callable[["WorkflowState"], "WorkflowState"]] = None,
     ) -> None:
         """
         Args:
@@ -69,7 +68,7 @@ class Step:
         self.pre_hook = pre_hook
         self.post_hook = post_hook
 
-    async def execute(self, state: WorkflowState) -> WorkflowState:
+    async def execute(self, state: "WorkflowState") -> "WorkflowState":
         """
         Execute pre_hook → block → post_hook in sequence.
 
