@@ -1167,30 +1167,30 @@ def gc_cmd(ctx, older_than, gc_all):
 @cli.command("run")
 @click.argument("workflow_file", type=click.Path(exists=True))
 @click.option(
-    "--task",
-    "task_file",
+    "--action",
+    "action_file",
     required=True,
     type=click.Path(exists=True),
-    help="Path to task YAML file",
+    help="Path to action YAML file",
 )
 @click.pass_context
-def run_cmd(ctx, workflow_file, task_file):
-    """Run a workflow with a given task.
+def run_cmd(ctx, workflow_file, action_file):
+    """Run a workflow with a given action.
 
     WORKFLOW_FILE: Path to workflow YAML file
-    --task TASK_FILE: Path to task YAML file
+    --action ACTION_FILE: Path to action YAML file
     """
     import asyncio
     from phalanx_core.yaml.parser import parse_workflow_yaml, parse_action_yaml
     from phalanx_core.state import WorkflowState
 
     try:
-        # Load workflow and task
+        # Load workflow and action
         workflow = parse_workflow_yaml(workflow_file)
-        task = parse_action_yaml(task_file)
+        action = parse_action_yaml(action_file)
 
-        # Initialize state with the task
-        initial_state = WorkflowState(current_task=task)
+        # Initialize state with the action
+        initial_state = WorkflowState(current_action=action)
 
         # Run the workflow
         final_state = asyncio.run(workflow.run(initial_state))

@@ -90,15 +90,17 @@ class TestInit:
 class TestRun:
     def test_run_missing_workflow(self, runner, tmp_path):
         """run command exits with code 1 when workflow file not found."""
-        task_file = tmp_path / "task.yaml"
-        task_file.write_text("id: test_task\ninstruction: Do something\n")
+        action_file = tmp_path / "action.yaml"
+        action_file.write_text("id: test_action\ninstruction: Do something\n")
 
-        result = runner.invoke(cli, ["run", "/nonexistent/workflow.yaml", "--task", str(task_file)])
+        result = runner.invoke(
+            cli, ["run", "/nonexistent/workflow.yaml", "--action", str(action_file)]
+        )
         assert result.exit_code != 0
         assert "Error" in result.output or "not found" in result.output.lower()
 
-    def test_run_missing_task(self, runner, tmp_path):
-        """run command exits with code 1 when task file not found."""
+    def test_run_missing_action(self, runner, tmp_path):
+        """run command exits with code 1 when action file not found."""
         workflow_file = tmp_path / "workflow.yaml"
         workflow_file.write_text(
             """
@@ -114,7 +116,9 @@ blocks:
 """
         )
 
-        result = runner.invoke(cli, ["run", str(workflow_file), "--task", "/nonexistent/task.yaml"])
+        result = runner.invoke(
+            cli, ["run", str(workflow_file), "--action", "/nonexistent/action.yaml"]
+        )
         assert result.exit_code != 0
 
     def test_run_invalid_workflow_yaml(self, runner, tmp_path):
@@ -122,15 +126,15 @@ blocks:
         workflow_file = tmp_path / "workflow.yaml"
         workflow_file.write_text("invalid: yaml: content: here")
 
-        task_file = tmp_path / "task.yaml"
-        task_file.write_text("id: test_task\ninstruction: Do something\n")
+        action_file = tmp_path / "action.yaml"
+        action_file.write_text("id: test_action\ninstruction: Do something\n")
 
-        result = runner.invoke(cli, ["run", str(workflow_file), "--task", str(task_file)])
+        result = runner.invoke(cli, ["run", str(workflow_file), "--action", str(action_file)])
         assert result.exit_code != 0
         assert "Error" in result.output
 
-    def test_run_invalid_task_yaml(self, runner, tmp_path):
-        """run command exits with code 1 when task YAML is invalid."""
+    def test_run_invalid_action_yaml(self, runner, tmp_path):
+        """run command exits with code 1 when action YAML is invalid."""
         workflow_file = tmp_path / "workflow.yaml"
         workflow_file.write_text(
             """
@@ -146,15 +150,15 @@ blocks:
 """
         )
 
-        task_file = tmp_path / "task.yaml"
-        task_file.write_text("invalid: task: yaml")
+        action_file = tmp_path / "action.yaml"
+        action_file.write_text("invalid: action: yaml")
 
-        result = runner.invoke(cli, ["run", str(workflow_file), "--task", str(task_file)])
+        result = runner.invoke(cli, ["run", str(workflow_file), "--action", str(action_file)])
         assert result.exit_code != 0
         assert "Error" in result.output
 
-    def test_run_task_option_required(self, runner, tmp_path):
-        """run command requires --task option."""
+    def test_run_action_option_required(self, runner, tmp_path):
+        """run command requires --action option."""
         workflow_file = tmp_path / "workflow.yaml"
         workflow_file.write_text(
             """
@@ -172,7 +176,7 @@ blocks:
 
         result = runner.invoke(cli, ["run", str(workflow_file)])
         assert result.exit_code != 0
-        assert "task" in result.output.lower()
+        assert "action" in result.output.lower()
 
     def test_run_simple_workflow_with_placeholder(self, runner, tmp_path):
         """run command successfully executes a simple workflow with placeholder block."""
@@ -192,10 +196,10 @@ blocks:
 """
         )
 
-        task_file = tmp_path / "task.yaml"
-        task_file.write_text("id: test_task\ninstruction: Do something\n")
+        action_file = tmp_path / "action.yaml"
+        action_file.write_text("id: test_action\ninstruction: Do something\n")
 
-        result = runner.invoke(cli, ["run", str(workflow_file), "--task", str(task_file)])
+        result = runner.invoke(cli, ["run", str(workflow_file), "--action", str(action_file)])
         assert result.exit_code == 0
         assert "Workflow execution completed successfully" in result.output
         assert "tokens" in result.output.lower()
