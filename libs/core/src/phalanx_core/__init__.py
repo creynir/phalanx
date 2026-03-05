@@ -20,6 +20,7 @@ from .blocks.implementations import (
 )
 from .blocks.registry import BlockRegistry, BlockFactory
 from .workflow import Workflow
+from .yaml import parse_workflow_yaml
 
 __all__ = [
     "Soul",
@@ -42,4 +43,5 @@ __all__ = [
     "BlockRegistry",
     "BlockFactory",
     "Workflow",
+    "parse_workflow_yaml",
 ]
