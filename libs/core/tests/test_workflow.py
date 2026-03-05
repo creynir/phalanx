@@ -546,3 +546,234 @@ async def test_run_backward_compatible_without_registry():
     assert block_a.executed
     assert block_b.executed
     assert final_state.results == {"a": "Output A", "b": "Output B"}
+
+
+@pytest.mark.asyncio
+async def test_dynamic_routing():
+    """AC-3: Conditional routing branches on state.metadata decision."""
+    # ── Scenario 1: Global router_decision = "approved" ───────────────
+    approved_block = MockBlock("approve_path", "Approved output")
+    rejected_block = MockBlock("reject_path", "Rejected output")
+
+    # Router mock: sets metadata via RouterBlock convention
+    class RouterMock(BaseBlock):
+        def __init__(self) -> None:
+            super().__init__("router")
+
+        async def execute(self, state: WorkflowState) -> WorkflowState:
+            # Simulate RouterBlock writing global decision key
+            return state.model_copy(
+                update={
+                    "results": {**state.results, self.block_id: "approved"},
+                    "metadata": {**state.metadata, "router_decision": "approved"},
+                    "messages": state.messages
+                    + [{"role": "system", "content": "[Block router] RouterMock"}],
+                }
+            )
+
+    wf = Workflow(name="routing_test")
+    wf.add_block(RouterMock())
+    wf.add_block(approved_block)
+    wf.add_block(rejected_block)
+    wf.add_conditional_transition(
+        "router",
+        {"approved": "approve_path", "rejected": "reject_path", "default": "reject_path"},
+    )
+    wf.add_transition("approve_path", None)
+    wf.add_transition("reject_path", None)
+    wf.set_entry("router")
+
+    errors = wf.validate()
+    assert not errors
+
+    state = WorkflowState()
+    _ = await wf.run(state)
+
+    assert approved_block.executed is True
+    assert rejected_block.executed is False
+
+    # ── Scenario 2: Block-scoped decision key only ─────────────────────
+    approved_block2 = MockBlock("approve_path2", "Approved2")
+    rejected_block2 = MockBlock("reject_path2", "Rejected2")
+
+    class RouterMockScoped(BaseBlock):
+        def __init__(self) -> None:
+            super().__init__("router2")
+
+        async def execute(self, state: WorkflowState) -> WorkflowState:
+            # Only write block-scoped key (no global router_decision)
+            return state.model_copy(
+                update={
+                    "results": {**state.results, self.block_id: "rejected"},
+                    "metadata": {**state.metadata, "router2_decision": "rejected"},
+                    "messages": state.messages
+                    + [{"role": "system", "content": "[Block router2] RouterMockScoped"}],
+                }
+            )
+
+    wf2 = Workflow(name="routing_test2")
+    wf2.add_block(RouterMockScoped())
+    wf2.add_block(approved_block2)
+    wf2.add_block(rejected_block2)
+    wf2.add_conditional_transition(
+        "router2",
+        {"approved": "approve_path2", "rejected": "reject_path2", "default": "approve_path2"},
+    )
+    wf2.add_transition("approve_path2", None)
+    wf2.add_transition("reject_path2", None)
+    wf2.set_entry("router2")
+
+    state2 = WorkflowState()
+    _ = await wf2.run(state2)
+
+    assert rejected_block2.executed is True
+
+    # ── Scenario 3: Default fallback (unknown decision) ────────────────
+    default_target = MockBlock("default_path", "Default output")
+    unknown_path = MockBlock("unknown_path", "Should not run")
+
+    class RouterMockUnknown(BaseBlock):
+        def __init__(self) -> None:
+            super().__init__("router3")
+
+        async def execute(self, state: WorkflowState) -> WorkflowState:
+            return state.model_copy(
+                update={
+                    "results": {**state.results, self.block_id: "unknown_decision"},
+                    "metadata": {**state.metadata, "router_decision": "unknown_decision"},
+                    "messages": state.messages
+                    + [{"role": "system", "content": "[Block router3] RouterMockUnknown"}],
+                }
+            )
+
+    wf3 = Workflow(name="routing_test3")
+    wf3.add_block(RouterMockUnknown())
+    wf3.add_block(default_target)
+    wf3.add_block(unknown_path)
+    wf3.add_conditional_transition(
+        "router3",
+        {"known": "unknown_path", "default": "default_path"},
+    )
+    wf3.add_transition("default_path", None)
+    wf3.add_transition("unknown_path", None)
+    wf3.set_entry("router3")
+
+    state3 = WorkflowState()
+    _ = await wf3.run(state3)
+
+    assert default_target.executed is True
+    assert unknown_path.executed is False
+
+    # ── Scenario 4: KeyError when no matching key and no default ───────
+    class RouterMockNoDefault(BaseBlock):
+        def __init__(self) -> None:
+            super().__init__("router4")
+
+        async def execute(self, state: WorkflowState) -> WorkflowState:
+            return state.model_copy(
+                update={
+                    "results": {**state.results, self.block_id: "missing"},
+                    "metadata": {**state.metadata, "router_decision": "missing"},
+                    "messages": state.messages
+                    + [{"role": "system", "content": "[Block router4] RouterMockNoDefault"}],
+                }
+            )
+
+    fallback_block = MockBlock("fallback", "Fallback output")
+
+    wf4 = Workflow(name="routing_test4")
+    wf4.add_block(RouterMockNoDefault())
+    wf4.add_block(fallback_block)
+    wf4.add_conditional_transition("router4", {"only_key": "fallback"})
+    wf4.add_transition("fallback", None)
+    wf4.set_entry("router4")
+
+    state4 = WorkflowState()
+    with pytest.raises(KeyError):
+        await wf4.run(state4)
+
+
+@pytest.mark.asyncio
+async def test_dynamic_injection():
+    """AC-4: Dynamic step injection splices blocks into live queue."""
+    from phalanx_core.blocks.registry import BlockRegistry
+
+    # ── Scenario 1: Registry path (custom factory) ─────────────────────
+    injected_mock = MockBlock("injected_step", "Injected result")
+    terminal_block = MockBlock("terminal", "Terminal output")
+
+    class PlannerBlock(BaseBlock):
+        """Simulates EngineeringManagerBlock: writes _new_steps to metadata."""
+
+        def __init__(self) -> None:
+            super().__init__("planner")
+
+        async def execute(self, state: WorkflowState) -> WorkflowState:
+            return state.model_copy(
+                update={
+                    "results": {**state.results, self.block_id: "plan generated"},
+                    "metadata": {
+                        **state.metadata,
+                        "planner_new_steps": [
+                            {"step_id": "injected_step", "description": "Do injected work"}
+                        ],
+                    },
+                    "messages": state.messages
+                    + [{"role": "system", "content": "[Block planner] PlannerBlock"}],
+                }
+            )
+
+    wf = Workflow(name="injection_test")
+    wf.add_block(PlannerBlock())
+    wf.add_block(terminal_block)
+    wf.add_transition("planner", "terminal")
+    wf.add_transition("terminal", None)
+    wf.set_entry("planner")
+
+    # Registry with custom factory returning our injected_mock
+    registry = BlockRegistry()
+    registry.register("injected_step", lambda sid, desc: injected_mock)
+
+    state = WorkflowState()
+    final_state = await wf.run(state, registry=registry)
+
+    assert injected_mock.executed is True
+    assert "injected_step" in final_state.results
+    assert terminal_block.executed is True
+
+    # ── Scenario 2: Placeholder path (no registry) ─────────────────────
+    terminal_block2 = MockBlock("terminal2", "Terminal2 output")
+
+    class PlannerBlock2(BaseBlock):
+        def __init__(self) -> None:
+            super().__init__("planner2")
+
+        async def execute(self, state: WorkflowState) -> WorkflowState:
+            return state.model_copy(
+                update={
+                    "results": {**state.results, self.block_id: "plan2 generated"},
+                    "metadata": {
+                        **state.metadata,
+                        "planner2_new_steps": [
+                            {"step_id": "injected_step", "description": "Do injected work"}
+                        ],
+                    },
+                    "messages": state.messages
+                    + [{"role": "system", "content": "[Block planner2] PlannerBlock2"}],
+                }
+            )
+
+    wf2 = Workflow(name="injection_test2")
+    wf2.add_block(PlannerBlock2())
+    wf2.add_block(terminal_block2)
+    wf2.add_transition("planner2", "terminal2")
+    wf2.add_transition("terminal2", None)
+    wf2.set_entry("planner2")
+
+    state2 = WorkflowState()
+    final_state2 = await wf2.run(state2, registry=None)
+
+    assert "injected_step" in final_state2.results
+    # Placeholder echoes description string
+    assert final_state2.results["injected_step"] == "Do injected work"
+    assert terminal_block2.executed is True
