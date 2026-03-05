@@ -1,0 +1,36 @@
+version: "1.0"
+config:
+  model_name: claude-3-haiku-20240307
+souls:
+  product_manager:
+    id: pm_1
+    role: Product Manager
+    system_prompt: You are a visionary Product Manager. Given a rough idea, create a compelling product name, target audience, and a 3-point unique value proposition.
+  designer:
+    id: designer_1
+    role: UI/UX Designer
+    system_prompt: You are an expert UI/UX Designer. Based on a product description, define a modern, sleek design system including a color palette (hex codes), typography, and layout structure for a landing page.
+  frontend_dev:
+    id: dev_1
+    role: Frontend Developer
+    system_prompt: You are a senior frontend developer. Using the provided product description and design system, write a complete, single-file HTML landing page using Tailwind CSS via CDN (e.g. <script src="https://cdn.tailwindcss.com"></script>). Include modern hero sections, features, and a footer. It should be beautiful and responsive. Output ONLY valid HTML code, nothing else, without markdown code block backticks if possible, or just standard HTML block.
+blocks:
+  ideate_block:
+    type: linear
+    soul_ref: product_manager
+  design_block:
+    type: linear
+    soul_ref: designer
+  code_block:
+    type: linear
+    soul_ref: frontend_dev
+workflow:
+  name: landing_page_generator
+  entry: ideate_block
+  transitions:
+    - from: ideate_block
+      to: design_block
+    - from: design_block
+      to: code_block
+    - from: code_block
+      to: null
