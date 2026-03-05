@@ -90,7 +90,9 @@ def test_souls():
     """Standard test souls for all integration tests."""
     return {
         "advisor": Soul(
-            id="advisor", role="Error Advisor", system_prompt="Analyze errors and recommend fixes."
+            id="advisor",
+            role="Error Analysis Expert",
+            system_prompt="Analyze errors and recommend fixes.",
         ),
         "agent1": Soul(id="agent1", role="Agent 1", system_prompt="Provide input on topics."),
         "agent2": Soul(id="agent2", role="Agent 2", system_prompt="Provide input on topics."),
@@ -119,7 +121,7 @@ async def test_shared_memory_key_format_compatibility(mock_runner, test_souls):
         # MessageBus calls (2 agents × 1 iteration = 2)
         ExecutionResult(task_id="t1", soul_id="agent1", output="Opinion A"),
         ExecutionResult(task_id="t2", soul_id="agent2", output="Opinion B"),
-        # Advisor call (1)
+        # Team Lead call (1)
         ExecutionResult(
             task_id="adv", soul_id="advisor", output="Recommendation: Retry with backoff"
         ),
@@ -358,7 +360,7 @@ async def test_four_block_error_recovery_workflow(mock_runner, test_souls):
             return ExecutionResult(
                 task_id=task.id, soul_id=soul.id, output=f"Input {call_count[0]}"
             )
-        else:  # Advisor call
+        else:  # Team Lead call
             return ExecutionResult(
                 task_id=task.id,
                 soul_id=soul.id,
@@ -422,7 +424,7 @@ async def test_four_block_error_recovery_workflow(mock_runner, test_souls):
     # Verify complete workflow state
     assert "consensus" in state.results  # MessageBus output
     assert "decision" in state.results  # Router output
-    assert "recovery" in state.results  # Advisor output
+    assert "recovery" in state.results  # Team Lead output
     assert "Alternative approach" in state.results["recovery"]
 
     # Verify all shared_memory keys present

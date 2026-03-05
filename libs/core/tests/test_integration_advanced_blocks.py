@@ -107,7 +107,7 @@ def sample_souls():
         ),
         "advisor": Soul(
             id="advisor",
-            role="Advisor",
+            role="Error Analysis Expert",
             system_prompt="You analyze failures and provide recommendations.",
         ),
     }
