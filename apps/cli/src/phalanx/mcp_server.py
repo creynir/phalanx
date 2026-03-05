@@ -11,7 +11,7 @@ from typing import Dict
 
 from mcp.server.fastmcp import FastMCP
 
-from phalanx_core.primitives import Task
+from phalanx_core.primitives import Action
 from phalanx_core.state import WorkflowState
 from phalanx_core.workflow import Workflow
 from phalanx_core.yaml import parse_workflow_yaml
@@ -75,7 +75,7 @@ def create_mcp_server(workflows_dir: str = "./workflows") -> FastMCP:
         def _make_tool(wf: Workflow, name: str) -> None:
             async def run_workflow(task_instruction: str, task_context: str = "") -> str:
                 state = WorkflowState(
-                    current_task=Task(
+                    current_action=Action(
                         id="mcp_run",
                         instruction=task_instruction,
                         context=task_context if task_context else None,
