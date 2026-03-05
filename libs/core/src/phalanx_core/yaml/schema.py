@@ -16,6 +16,14 @@ class SoulDef(BaseModel):
     tools: Optional[List[Dict[str, Any]]] = None
 
 
+class TaskDef(BaseModel):
+    """Task definition as expressed in the YAML tasks: section."""
+
+    id: str
+    instruction: str
+    context: Optional[str] = None
+
+
 class BlockDef(BaseModel):
     """
     Block definition. `type` is the only required field.
