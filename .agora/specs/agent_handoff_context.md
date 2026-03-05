@@ -40,5 +40,17 @@ We designed a high-fidelity HTML mockup for the UI. The user provided the follow
 7.  **"Commit" Button:** Confirmed it commits YAML configs to Git, not run results.
 8.  **No Authentication:** Remove the user avatar ("MR") as there is no auth for this local tool.
 
-## 4. Immediate Next Steps
-The user is ready to begin work on the Phase 1.6 UI development, utilizing a visual feedback loop (e.g., Playwright/screenshots) to iteratively build the React interface according to the design spec and feedback above.
+## 4. Future Roadmap Context (Beyond Phase 1.6)
+The user has carefully reviewed the roadmap and ensured that all planned milestones from earlier conceptual phases are captured. The roadmap (documented in `.agora/specs/future-roadmap.md`) progresses as follows:
+- **Phase 1.6:** The UI & Visual Builder
+- **Phase 1.7:** Advanced UI Features (Visual Debugger, Collaboration, Marketplace, AI suggestions)
+- **Phase 1.8:** Advanced Orchestration & Reliability (Step-level Checkpoint/Resume, Auto-Restart for ghost sessions, Debt Tracking, Consensus Validation)
+- **Phase 1.9:** Context Injection & Cost Management (Continual Learning/Context Store, Cost/Budget Limits)
+- **Phase 2.0:** Deep Autonomy (Auto-Learning Memory/Vector DB for self-healing)
+- **Phase 3.0:** Advanced Optimizations (Backend Hot-Swapping, Context Serialization)
+
+## 5. Immediate Next Steps
+The user is ready to begin work on the Phase 1.6 UI development. The new agent should:
+1. Review this document and the updated `.agora/specs/phase-1.6-ui-ux-design.md`.
+2. Determine the best framework/setup for the UI (Next.js + React Flow is proposed).
+3. Set up the visual feedback loop (e.g., Playwright/screenshots) to iteratively build the React interface according to the design spec and feedback above.
