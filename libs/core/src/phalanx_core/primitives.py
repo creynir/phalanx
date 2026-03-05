@@ -8,8 +8,7 @@ from pydantic import BaseModel, Field
 if TYPE_CHECKING:
     from phalanx_core.blocks.base import BaseBlock
     from phalanx_core.blueprint import Blueprint
-
-from phalanx_core.state import WorkflowState
+    from phalanx_core.state import WorkflowState
 
 
 class Soul(BaseModel):
@@ -52,8 +51,8 @@ class Step:
     def __init__(
         self,
         block: "BaseBlock",
-        pre_hook: Optional[Callable[[WorkflowState], WorkflowState]] = None,
-        post_hook: Optional[Callable[[WorkflowState], WorkflowState]] = None,
+        pre_hook: Optional[Callable[["WorkflowState"], "WorkflowState"]] = None,
+        post_hook: Optional[Callable[["WorkflowState"], "WorkflowState"]] = None,
     ) -> None:
         """
         Args:
@@ -69,7 +68,7 @@ class Step:
         self.pre_hook = pre_hook
         self.post_hook = post_hook
 
-    async def execute(self, state: WorkflowState) -> WorkflowState:
+    async def execute(self, state: "WorkflowState") -> "WorkflowState":
         """
         Execute pre_hook → block → post_hook in sequence.
 
@@ -82,6 +81,8 @@ class Step:
         Raises:
             Exception: Propagates any exception from hooks or block.
         """
+        # Import at runtime to avoid circular import
+
         # Phase 1: Pre-hook (optional)
         if self.pre_hook is not None:
             state = self.pre_hook(state)
@@ -142,7 +143,7 @@ class Skill:
             ValueError: If blueprint is invalid (propagates from blueprint.run()).
             Exception: If any block in blueprint fails (propagates from blueprint.run()).
         """
-        # Import here to avoid circular import at module load time
+        # Import at runtime to avoid circular import
 
         # Step 1: Add skill metadata to state
         state = state.model_copy(
