@@ -5,7 +5,7 @@ Exports: parse_workflow_yaml, BUILT_IN_SOULS, BLOCK_TYPE_REGISTRY
 
 from __future__ import annotations
 
-import yaml  # type: ignore[import-untyped]
+import yaml
 from typing import Any, Callable, Dict, Union
 
 from phalanx_core.blocks.base import BaseBlock
