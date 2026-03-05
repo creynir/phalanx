@@ -580,8 +580,8 @@ async def test_team_lead_block_preserves_existing_shared_memory(mock_runner, sam
 
 
 @pytest.fixture
-def engineering_manager_soul():
-    """Sample engineering manager soul for testing."""
+def planner_soul():
+    """Sample planning soul for EngineeringManagerBlock testing."""
     return Soul(
         id="engineering_manager",
         role="Engineering Manager",
@@ -591,7 +591,7 @@ def engineering_manager_soul():
 
 # ===== EngineeringManagerBlock Tests =====
 @pytest.mark.asyncio
-async def test_engineering_manager_generates_new_steps(mock_runner, engineering_manager_soul):
+async def test_engineering_manager_generates_new_steps(mock_runner, planner_soul):
     """
     AC1: pytest libs/core/tests/test_advanced_blocks.py::test_engineering_manager_generates_new_steps -v passes
     - Produces text plan in results[block_id]
@@ -603,20 +603,20 @@ async def test_engineering_manager_generates_new_steps(mock_runner, engineering_
 3. database_schema: Design user and session tables"""
 
     mock_runner.execute_task.return_value = ExecutionResult(
-        task_id="engineering_manager1_planning", soul_id="planner", output=well_formatted_plan
+        task_id="replanner1_planning", soul_id="planner", output=well_formatted_plan
     )
 
-    block = EngineeringManagerBlock("engineering_manager1", engineering_manager_soul, mock_runner)
+    block = EngineeringManagerBlock("replanner1", planner_soul, mock_runner)
     task = Task(id="main", instruction="Build authentication system")
     state = WorkflowState(current_task=task)
 
     result_state = await block.execute(state)
 
     # Verify text plan in results
-    assert result_state.results["engineering_manager1"] == well_formatted_plan
+    assert result_state.results["replanner1"] == well_formatted_plan
 
     # Verify JSON step list in metadata
-    steps = result_state.metadata["engineering_manager1_new_steps"]
+    steps = result_state.metadata["replanner1_new_steps"]
     assert isinstance(steps, list)
     assert len(steps) == 3
 
@@ -636,24 +636,24 @@ async def test_engineering_manager_generates_new_steps(mock_runner, engineering_
 
     # Verify message appended
     assert len(result_state.messages) == 1
-    assert "[Block engineering_manager1]" in result_state.messages[0]["content"]
-    assert "generated 3 step(s)" in result_state.messages[0]["content"]
+    assert "[Block replanner1]" in result_state.messages[0]["content"]
+    assert "EngineeringManagerBlock generated 3 step(s)" in result_state.messages[0]["content"]
 
 
 @pytest.mark.asyncio
-async def test_engineering_manager_validates_current_task(mock_runner, engineering_manager_soul):
+async def test_engineering_manager_validates_current_task(mock_runner, planner_soul):
     """AC2: EngineeringManagerBlock validates current_task is not None during execute()."""
-    block = EngineeringManagerBlock("engineering_manager1", engineering_manager_soul, mock_runner)
+    block = EngineeringManagerBlock("replanner1", planner_soul, mock_runner)
     state = WorkflowState(current_task=None)
 
     with pytest.raises(
-        ValueError, match="EngineeringManagerBlock engineering_manager1: state.current_task is None"
+        ValueError, match="EngineeringManagerBlock replanner1: state.current_task is None"
     ):
         await block.execute(state)
 
 
 @pytest.mark.asyncio
-async def test_engineering_manager_regex_pattern_parsing(mock_runner, engineering_manager_soul):
+async def test_engineering_manager_regex_pattern_parsing(mock_runner, planner_soul):
     r"""AC3: Regex pattern '^\d+\.\s+([^:]+):\s+(.+)$' successfully parses format '1. step_id: description'."""
     # Test explicit regex pattern with various formats
     test_plan = """1. step_one: First step description
@@ -661,16 +661,16 @@ async def test_engineering_manager_regex_pattern_parsing(mock_runner, engineerin
 3. step_three: Third step"""
 
     mock_runner.execute_task.return_value = ExecutionResult(
-        task_id="engineering_manager1_planning", soul_id="planner", output=test_plan
+        task_id="replanner1_planning", soul_id="planner", output=test_plan
     )
 
-    block = EngineeringManagerBlock("engineering_manager1", engineering_manager_soul, mock_runner)
+    block = EngineeringManagerBlock("replanner1", planner_soul, mock_runner)
     task = Task(id="test", instruction="Test task")
     state = WorkflowState(current_task=task)
 
     result_state = await block.execute(state)
 
-    steps = result_state.metadata["engineering_manager1_new_steps"]
+    steps = result_state.metadata["replanner1_new_steps"]
     assert len(steps) == 3
     assert steps[0]["step_id"] == "step_one"
     assert steps[0]["description"] == "First step description"
@@ -681,9 +681,7 @@ async def test_engineering_manager_regex_pattern_parsing(mock_runner, engineerin
 
 
 @pytest.mark.asyncio
-async def test_engineering_manager_fallback_creates_generic_step(
-    mock_runner, engineering_manager_soul
-):
+async def test_engineering_manager_fallback_creates_generic_step(mock_runner, planner_soul):
     """AC4: Fallback creates single generic step if regex finds no matches."""
     # Mock LLM returns unformatted text (doesn't match pattern)
     unformatted_plan = """Here's my plan for this project:
@@ -692,41 +690,39 @@ async def test_engineering_manager_fallback_creates_generic_step(
 - Finally implement and test"""
 
     mock_runner.execute_task.return_value = ExecutionResult(
-        task_id="engineering_manager1_planning", soul_id="planner", output=unformatted_plan
+        task_id="replanner1_planning", soul_id="planner", output=unformatted_plan
     )
 
-    block = EngineeringManagerBlock("engineering_manager1", engineering_manager_soul, mock_runner)
+    block = EngineeringManagerBlock("replanner1", planner_soul, mock_runner)
     task = Task(id="test", instruction="Test task")
     state = WorkflowState(current_task=task)
 
     result_state = await block.execute(state)
 
     # Verify single generic step created
-    steps = result_state.metadata["engineering_manager1_new_steps"]
+    steps = result_state.metadata["replanner1_new_steps"]
     assert len(steps) == 1
     assert steps[0]["step_id"] == "replanned_execution"
     assert steps[0]["description"] == unformatted_plan  # Full text since < 200 chars
 
 
 @pytest.mark.asyncio
-async def test_engineering_manager_fallback_truncates_at_200_chars(
-    mock_runner, engineering_manager_soul
-):
+async def test_engineering_manager_fallback_truncates_at_200_chars(mock_runner, planner_soul):
     """Verify fallback truncates description at 200 chars."""
     # Create unformatted plan longer than 200 chars
     long_unformatted_plan = "A" * 250 + " some more text"
 
     mock_runner.execute_task.return_value = ExecutionResult(
-        task_id="engineering_manager1_planning", soul_id="planner", output=long_unformatted_plan
+        task_id="replanner1_planning", soul_id="planner", output=long_unformatted_plan
     )
 
-    block = EngineeringManagerBlock("engineering_manager1", engineering_manager_soul, mock_runner)
+    block = EngineeringManagerBlock("replanner1", planner_soul, mock_runner)
     task = Task(id="test", instruction="Test task")
     state = WorkflowState(current_task=task)
 
     result_state = await block.execute(state)
 
-    steps = result_state.metadata["engineering_manager1_new_steps"]
+    steps = result_state.metadata["replanner1_new_steps"]
     assert len(steps) == 1
     assert steps[0]["step_id"] == "replanned_execution"
     # Verify truncation at 200 chars with "..."
@@ -735,9 +731,7 @@ async def test_engineering_manager_fallback_truncates_at_200_chars(
 
 
 @pytest.mark.asyncio
-async def test_engineering_manager_regex_with_whitespace_variations(
-    mock_runner, engineering_manager_soul
-):
+async def test_engineering_manager_regex_with_whitespace_variations(mock_runner, planner_soul):
     """Test regex handles various whitespace around step_id and description."""
     # Test with extra spaces
     plan_with_spaces = """1.   step_with_spaces  :   Description with spaces
@@ -745,16 +739,16 @@ async def test_engineering_manager_regex_with_whitespace_variations(
 3.step_no_space:No space after number"""
 
     mock_runner.execute_task.return_value = ExecutionResult(
-        task_id="engineering_manager1_planning", soul_id="planner", output=plan_with_spaces
+        task_id="replanner1_planning", soul_id="planner", output=plan_with_spaces
     )
 
-    block = EngineeringManagerBlock("engineering_manager1", engineering_manager_soul, mock_runner)
+    block = EngineeringManagerBlock("replanner1", planner_soul, mock_runner)
     task = Task(id="test", instruction="Test task")
     state = WorkflowState(current_task=task)
 
     result_state = await block.execute(state)
 
-    steps = result_state.metadata["engineering_manager1_new_steps"]
+    steps = result_state.metadata["replanner1_new_steps"]
     # First line matches because ^\d+\. requires space after period
     # Third line doesn't match because no space after period
     assert len(steps) == 2
@@ -767,16 +761,16 @@ async def test_engineering_manager_regex_with_whitespace_variations(
 
 @pytest.mark.asyncio
 async def test_engineering_manager_preserves_existing_results_and_metadata(
-    mock_runner, engineering_manager_soul
+    mock_runner, planner_soul
 ):
     """EngineeringManagerBlock preserves existing results and metadata."""
     plan = "1. step1: Description 1"
 
     mock_runner.execute_task.return_value = ExecutionResult(
-        task_id="engineering_manager1_planning", soul_id="planner", output=plan
+        task_id="replanner1_planning", soul_id="planner", output=plan
     )
 
-    block = EngineeringManagerBlock("engineering_manager1", engineering_manager_soul, mock_runner)
+    block = EngineeringManagerBlock("replanner1", planner_soul, mock_runner)
     task = Task(id="test", instruction="Test task")
     state = WorkflowState(
         current_task=task,
@@ -791,26 +785,26 @@ async def test_engineering_manager_preserves_existing_results_and_metadata(
     assert result_state.metadata["existing_key"] == "existing_value"
 
     # Verify new data added
-    assert result_state.results["engineering_manager1"] == plan
-    assert "engineering_manager1_new_steps" in result_state.metadata
+    assert result_state.results["replanner1"] == plan
+    assert "replanner1_new_steps" in result_state.metadata
 
 
 @pytest.mark.asyncio
 async def test_engineering_manager_reads_previous_errors_from_shared_memory(
-    mock_runner, engineering_manager_soul
+    mock_runner, planner_soul
 ):
     """EngineeringManagerBlock includes previous errors from shared_memory in planning context."""
     plan = "1. retry_step: Try again with fix"
 
     mock_runner.execute_task.return_value = ExecutionResult(
-        task_id="engineering_manager1_planning", soul_id="planner", output=plan
+        task_id="replanner1_planning", soul_id="planner", output=plan
     )
 
-    block = EngineeringManagerBlock("engineering_manager1", engineering_manager_soul, mock_runner)
+    block = EngineeringManagerBlock("replanner1", planner_soul, mock_runner)
     task = Task(id="test", instruction="Build feature")
     state = WorkflowState(
         current_task=task,
-        shared_memory={"engineering_manager1_previous_errors": "Error: Connection timeout"},
+        shared_memory={"replanner1_previous_errors": "Error: Connection timeout"},
     )
 
     await block.execute(state)
@@ -824,7 +818,7 @@ async def test_engineering_manager_reads_previous_errors_from_shared_memory(
 
 
 @pytest.mark.asyncio
-async def test_engineering_manager_multiline_descriptions(mock_runner, engineering_manager_soul):
+async def test_engineering_manager_multiline_descriptions(mock_runner, planner_soul):
     """Test that regex correctly handles single-line format (multiline descriptions should not match)."""
     # Each step must be on single line - multiline descriptions shouldn't match
     plan_single_line = """1. step1: This is a single line description
@@ -832,16 +826,16 @@ async def test_engineering_manager_multiline_descriptions(mock_runner, engineeri
 3. step3: Final step"""
 
     mock_runner.execute_task.return_value = ExecutionResult(
-        task_id="engineering_manager1_planning", soul_id="planner", output=plan_single_line
+        task_id="replanner1_planning", soul_id="planner", output=plan_single_line
     )
 
-    block = EngineeringManagerBlock("engineering_manager1", engineering_manager_soul, mock_runner)
+    block = EngineeringManagerBlock("replanner1", planner_soul, mock_runner)
     task = Task(id="test", instruction="Test")
     state = WorkflowState(current_task=task)
 
     result_state = await block.execute(state)
 
-    steps = result_state.metadata["engineering_manager1_new_steps"]
+    steps = result_state.metadata["replanner1_new_steps"]
     assert len(steps) == 3
 
 
