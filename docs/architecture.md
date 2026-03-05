@@ -25,7 +25,7 @@ To ensure the system remains maintainable and accessible to both technical and n
     - Phalanx GUI (Next.js visual builder)
 
 ## 4. Phase 1.3: Dynamic Graph Engine (Design Spec)
-*Note: This phase is designed but not yet implemented.*
+*Note: This phase is implemented and active.*
 
 ### Objectives
 Transform the static Workflow runner into a dynamic state machine capable of self-healing and branching.
@@ -40,9 +40,11 @@ Transform the static Workflow runner into a dynamic state machine capable of sel
 3. **Hallucination Protection**:
    - If an agent hallucinates a non-existent step, the Engine fails the injection and loops back to a `RetryBlock` wrapping the manager, forcing it to correct its output.
 
-## 5. Phase 1.4: API & MCP Integration (Planned)
-- **Auto-Discovery**: Expose a `custom/` directory where developers can drop Python classes inheriting from `BaseBlock`. The API automatically scans, registers, and exposes these to the UI.
-- **MCP Native**: Expose Phalanx workflows via the Model Context Protocol so external AI agents (Cursor, Langsmith, Claude Desktop) can discover and trigger Workflows natively.
+## 5. Phase 1.4: API & Extensibility Layer (Planned)
+See [Phase 1.4 Spec](../.agora/specs/phase-1.4-api-and-extensibility.md) for full design.
+- **Standard Library & YAML Parser**: Non-technical users define Workflows, Souls, and Tasks in YAML/JSON; parser produces runnable Python objects.
+- **Auto-Discovery**: `custom/` directory convention — Python files with `BaseBlock` subclasses are automatically discovered and registered in `BlockRegistry`.
+- **FastAPI & MCP Server**: REST API for listing/running workflows; MCP exposure so external AIs (Cursor, Claude Desktop, Langsmith) can discover and trigger workflows as tools.
 
 ## 6. Phase 1.5 & 1.6: Production Readiness (Planned)
 - **Visual GUI**: Drag-and-drop workflow builder.
