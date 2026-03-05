@@ -413,6 +413,8 @@ The parser looks up `type` in the merged registry (built-in + discovered). If fo
   "status": "completed",
   "results": { "initial_research": "...", "review_gate": "approved" },
   "messages": [...],
+  "cost_usd": 0.045,
+  "total_tokens": 14200,
   "error": null
 }
 ```
@@ -464,7 +466,15 @@ async def phalanx_run_research_review(task_instruction: str, task_context: str =
     workflow = workflow_registry.get("research_review")
     state = WorkflowState(current_task=Task(id="run_1", instruction=task_instruction, context=task_context or None))
     final_state = await workflow.run(state, registry=block_registry)
-    return json.dumps({"results": final_state.results, "messages_summary": len(final_state.messages)})
+    
+    # Calculate costs (from telemetry or runner metrics)
+    cost = calculate_workflow_cost(final_state)
+    
+    return json.dumps({
+        "results": final_state.results, 
+        "messages_summary": len(final_state.messages),
+        "cost_usd": cost
+    })
 ```
 
 Dynamic registration: iterate over loaded workflows and call `mcp.tool()` (or equivalent) for each.
@@ -486,6 +496,44 @@ Dynamic registration: iterate over loaded workflows and call `mcp.tool()` (or eq
 ```
 
 **Claude Desktop:** Similar config in Claude's MCP settings; `phalanx mcp-server` runs the MCP stdio server.
+
+### 3.4 Cost Calculation Engine (Telemetry)
+
+**Context:** The API and MCP Server must return exact USD costs and token usage for each workflow run.
+
+#### 3.4.1 Model Updates
+- **`ExecutionResult`**: Add `cost_usd: float = 0.0` and `total_tokens: int = 0`.
+- **`WorkflowState`**: Add `total_cost_usd: float = 0.0` and `total_tokens: int = 0`.
+
+#### 3.4.2 LLM Client Integration
+`LiteLLMClient.achat()` must extract usage and cost from the response object:
+```python
+# phalanx_core/llm/client.py
+from litellm import completion_cost
+
+response = await acompletion(...)
+cost = completion_cost(completion_response=response)
+tokens = response.usage.total_tokens if response.usage else 0
+
+return {"content": content, "cost_usd": cost, "total_tokens": tokens}
+```
+
+#### 3.4.3 State Aggregation
+When `PhalanxTeamRunner.execute_task()` receives the cost data, it populates the `ExecutionResult`.
+When a Block (e.g., `LinearBlock`, `FanOutBlock`, `DebateBlock`) calls the runner, it must aggregate the cost into the state:
+```python
+# Inside a block's execute() method
+result = await self.runner.execute_task(...)
+
+return state.model_copy(
+    update={
+        "total_cost_usd": state.total_cost_usd + result.cost_usd,
+        "total_tokens": state.total_tokens + result.total_tokens,
+        ...
+    }
+)
+```
+*Note: Because `state` is immutable, each block returns a new state with the incrementally higher cost.*
 
 ---
 
