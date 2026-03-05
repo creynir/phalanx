@@ -4,7 +4,7 @@ Concrete block implementations for workflow composition.
 
 import asyncio
 import json
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from phalanx_core.blocks.base import BaseBlock
 from phalanx_core.state import WorkflowState
@@ -319,3 +319,126 @@ class DebateBlock(BaseBlock):
                 ],
             }
         )
+
+
+class RetryBlock(BaseBlock):
+    """
+    Wrap any BaseBlock with retry logic on exceptions.
+
+    Typical Use: Wrap flaky API blocks or unreliable operations.
+    Example: RetryBlock wraps APICallBlock, retries on ConnectionError.
+    """
+
+    def __init__(
+        self,
+        block_id: str,
+        inner_block: BaseBlock,
+        max_retries: int = 3,
+        provide_error_context: bool = False,
+    ) -> None:
+        """
+        Args:
+            block_id: Unique identifier for this block instance.
+            inner_block: The block to wrap with retry logic.
+            max_retries: Maximum number of retries after initial attempt (default: 3).
+                        Total attempts = 1 initial + max_retries.
+            provide_error_context: If True, store error messages in shared_memory.
+
+        Raises:
+            ValueError: If block_id is empty (from BaseBlock).
+            ValueError: If max_retries < 0.
+        """
+        super().__init__(block_id)
+        if max_retries < 0:
+            raise ValueError(f"RetryBlock {block_id}: max_retries must be >= 0, got {max_retries}")
+        self.inner_block = inner_block
+        self.max_retries = max_retries
+        self.provide_error_context = provide_error_context
+
+    async def execute(self, state: WorkflowState) -> WorkflowState:
+        """
+        Execute inner block with retry logic on exceptions.
+
+        Args:
+            state: Passed to inner_block.execute().
+
+        Returns:
+            New state with:
+            - results[block_id] = results[inner_block.block_id] (if success)
+            - shared_memory[f"{block_id}_retry_errors"] = List[str] (if provide_error_context=True)
+            - messages appended with retry summary
+
+        Raises:
+            Exception: If all retries exhausted, raises the last exception from inner_block.
+        """
+        errors: List[str] = []
+        attempts = 0  # Starts at 0, will increment to 1, 2, 3, ...
+        last_exception: Optional[Exception] = None
+
+        # Total attempts = 1 initial + max_retries retries
+        for attempt_num in range(self.max_retries + 1):
+            attempts += 1  # attempts now = 1, 2, 3, ... up to max_retries+1
+
+            try:
+                # Attempt execution
+                result_state = await self.inner_block.execute(state)
+
+                # Success! Store inner block's result under THIS block's ID
+                final_state = result_state.model_copy(
+                    update={
+                        "results": {
+                            **result_state.results,
+                            self.block_id: result_state.results.get(self.inner_block.block_id, ""),
+                        },
+                        "messages": result_state.messages
+                        + [
+                            {
+                                "role": "system",
+                                "content": f"[Block {self.block_id}] RetryBlock succeeded after {attempts} attempt(s)",
+                            }
+                        ],
+                    }
+                )
+
+                # Optionally store error context even on success (shows what was overcome)
+                if self.provide_error_context and errors:
+                    final_state = final_state.model_copy(
+                        update={
+                            "shared_memory": {
+                                **final_state.shared_memory,
+                                f"{self.block_id}_retry_errors": errors,
+                            }
+                        }
+                    )
+
+                return final_state
+
+            except Exception as e:
+                last_exception = e
+                error_msg = (
+                    f"Attempt {attempts}/{self.max_retries + 1}: {type(e).__name__}: {str(e)}"
+                )
+                errors.append(error_msg)
+
+                # If this was the last attempt, don't continue loop
+                if attempt_num == self.max_retries:
+                    break
+                # Otherwise, continue to next retry
+
+        # All retries exhausted - store error context and re-raise
+        if self.provide_error_context:
+            state = state.model_copy(
+                update={
+                    "shared_memory": {
+                        **state.shared_memory,
+                        f"{self.block_id}_retry_errors": errors,
+                    }
+                }
+            )
+
+        # Re-raise last exception
+        if last_exception is not None:
+            raise last_exception
+        else:
+            # This should never happen, but satisfy type checker
+            raise RuntimeError(f"RetryBlock {self.block_id}: unexpected error state")
