@@ -91,7 +91,7 @@ async def test_replanner_validates_current_task(mock_runner, planner_soul):
 
 @pytest.mark.asyncio
 async def test_replanner_regex_pattern_parsing(mock_runner, planner_soul):
-    """AC3: Regex pattern '^\d+\.\s+([^:]+):\s+(.+)$' successfully parses format '1. step_id: description'."""
+    r"""AC3: Regex pattern '^\d+\.\s+([^:]+):\s+(.+)$' successfully parses format '1. step_id: description'."""
     # Test explicit regex pattern with various formats
     test_plan = """1. step_one: First step description
 2. step_two: Second step description with more detail
