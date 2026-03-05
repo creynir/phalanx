@@ -11,8 +11,10 @@ from .blocks.implementations import (
     FanOutBlock,
     SynthesizeBlock,
     DebateBlock,
-    RouterBlock,
+    RetryBlock,
     AdvisorBlock,
+    ReplannerBlock,
+    MessageBusBlock,
 )
 from .blueprint import Blueprint
 
@@ -27,7 +29,9 @@ __all__ = [
     "FanOutBlock",
     "SynthesizeBlock",
     "DebateBlock",
-    "RouterBlock",
+    "RetryBlock",
     "AdvisorBlock",
+    "ReplannerBlock",
+    "MessageBusBlock",
     "Blueprint",
 ]
