@@ -5,7 +5,7 @@ Tests verify that features merged from different branches work correctly togethe
 1. RetryBlock ↔ TeamLeadBlock: shared_memory key format compatibility
 2. MessageBusBlock ↔ RouterBlock: consensus passing and evaluator flexibility
 3. Mixed workflows: Combining all 4 adaptive blocks in complex scenarios
-4. Type safety: Verify circular import fix in primitives.py doesn't break integrations
+4. Type safety: Verify import structure in primitives.py doesn't break integrations
 
 Priority: Tests conflict resolution areas and cross-feature interaction boundaries.
 """
@@ -447,7 +447,7 @@ async def test_workflow_integration_with_all_advanced_blocks(mock_runner, test_s
     ]
 
     # Build Workflow
-    bp = Workflow("integration_test")
+    wf = Workflow("integration_test")
 
     messagebus = MessageBusBlock(
         "mb", [test_souls["agent1"], test_souls["agent2"]], iterations=1, runner=mock_runner
@@ -459,16 +459,16 @@ async def test_workflow_integration_with_all_advanced_blocks(mock_runner, test_s
 
     router = RouterBlock("rt", route_logic, runner=None)
 
-    bp.add_block(messagebus).add_block(router)
-    bp.add_transition("mb", "rt").add_transition("rt", None)
-    bp.set_entry("mb")
+    wf.add_block(messagebus).add_block(router)
+    wf.add_transition("mb", "rt").add_transition("rt", None)
+    wf.set_entry("mb")
 
     # Validate and execute
-    errors = bp.validate()
+    errors = wf.validate()
     assert errors == [], f"Workflow validation failed: {errors}"
 
     initial_state = WorkflowState(current_task=Task(id="task6", instruction="Run integration"))
-    final_state = await bp.run(initial_state)
+    final_state = await wf.run(initial_state)
 
     # Verify execution order and results
     assert "mb" in final_state.results
