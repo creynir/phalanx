@@ -54,3 +54,12 @@ The user is ready to begin work on the Phase 1.6 UI development. The new agent s
 1. Review this document and the updated `.agora/specs/phase-1.6-ui-ux-design.md`.
 2. Determine the best framework/setup for the UI (Next.js + React Flow is proposed).
 3. Set up the visual feedback loop (e.g., Playwright/screenshots) to iteratively build the React interface according to the design spec and feedback above.
+## Permitted Models (Strict Enforcement)
+- haiku 4.5
+- gemini 3.1 pro
+- opus 4.6
+- sonnet 4.6
+- gpt 53
+- codex
+
+*Note for Cursor Agent: NEVER suggest or use any other models. For SWE-AF, strictly use sonnet 4.6 and haiku 4.5.*
