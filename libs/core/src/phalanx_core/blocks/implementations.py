@@ -271,7 +271,7 @@ class DebateBlock(BaseBlock):
         if state.current_task is None:
             raise ValueError(f"DebateBlock {self.block_id}: state.current_task is None")
 
-        transcript: List[Dict[str, any]] = []
+        transcript: List[Dict[str, Any]] = []
         previous_b_output: str = ""
 
         for round_num in range(1, self.iterations + 1):
@@ -851,6 +851,8 @@ class RouterBlock(BaseBlock):
                 )
 
             # Execute routing task with Soul
+            # Type narrowing: runner is guaranteed non-None when condition_evaluator is Soul (validated in __init__)
+            assert self.runner is not None, "Runner must be provided for Soul evaluator"
             result = await self.runner.execute_task(state.current_task, self.condition_evaluator)
             decision = result.output.strip()
         else:

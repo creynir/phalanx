@@ -401,6 +401,7 @@ async def test_router_block_callable_with_runner_allowed(mock_runner):
     assert result_state.results["router6"] == "pass"
 
 
+@pytest.mark.asyncio
 async def test_advisor_block_analyzes_failure(mock_runner, sample_soul):
     """
     AC-1: AdvisorBlock reads multiple failure_context_keys, produces recommendation
@@ -589,6 +590,7 @@ def planner_soul():
 
 
 # ===== ReplannerBlock Tests =====
+@pytest.mark.asyncio
 async def test_replanner_generates_new_steps(mock_runner, planner_soul):
     """
     AC1: pytest libs/core/tests/test_advanced_blocks.py::test_replanner_generates_new_steps -v passes
@@ -846,6 +848,7 @@ def sample_souls():
 
 
 # ===== MessageBusBlock Tests =====
+@pytest.mark.asyncio
 async def test_messagebus_n_agents(mock_runner, sample_souls):
     """AC-1: 4 agents × 3 iterations produces JSON transcript with 3 rounds of 4 contributions each."""
     # Create a counter-based mock that returns unique outputs per call
