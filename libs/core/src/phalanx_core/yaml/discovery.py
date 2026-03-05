@@ -1,10 +1,10 @@
 """
-Auto-discovery engine for custom blocks, souls, tasks, and workflows.
+Auto-discovery engine for custom blocks, souls, actions, and workflows.
 
 This module provides functionality to discover and load custom assets from a directory structure:
 - custom/blocks/: Python files containing BaseBlock subclasses
 - custom/souls/: YAML soul files
-- custom/tasks/: YAML task files (future use)
+- custom/actions/: YAML action files (future use)
 - custom/workflows/: YAML workflow files
 
 Usage:
@@ -173,7 +173,7 @@ def discover_custom_assets(
         custom/
           blocks/         # Python files with BaseBlock subclasses
           souls/          # YAML soul definitions
-          tasks/          # YAML task definitions (future use)
+          actions/        # YAML action definitions (future use)
           workflows/      # YAML workflow definitions
 
     Args:
