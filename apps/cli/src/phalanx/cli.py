@@ -25,6 +25,7 @@ Subcommands:
   status        Show all running agents
   init          Initialize .phalanx/ in workspace
   gc            Run garbage collection
+  run           Run a workflow with a task
 """
 
 from __future__ import annotations
@@ -1157,6 +1158,58 @@ def gc_cmd(ctx, older_than, gc_all):
             click.echo(f"Deleted {len(deleted)} teams: {', '.join(deleted)}")
         else:
             click.echo("No teams to clean up")
+
+
+# ── run ───────────────────────────────────────────────────────────
+
+
+@cli.command("run")
+@click.argument("workflow_file", type=click.Path(exists=True))
+@click.option(
+    "--task",
+    "task_file",
+    required=True,
+    type=click.Path(exists=True),
+    help="Path to task YAML file",
+)
+@click.pass_context
+def run_cmd(ctx, workflow_file, task_file):
+    """Run a workflow with a given task.
+
+    WORKFLOW_FILE: Path to workflow YAML file
+    --task TASK_FILE: Path to task YAML file
+    """
+    import asyncio
+    from phalanx_core.yaml.parser import parse_workflow_yaml, parse_task_yaml
+    from phalanx_core.state import WorkflowState
+
+    try:
+        # Load workflow and task
+        workflow = parse_workflow_yaml(workflow_file)
+        task = parse_task_yaml(task_file)
+
+        # Initialize state with the task
+        initial_state = WorkflowState(current_task=task)
+
+        # Run the workflow
+        final_state = asyncio.run(workflow.run(initial_state))
+
+        # Print output and cost
+        click.echo("Workflow execution completed successfully")
+        click.echo(f"Total tokens: {final_state.total_tokens}")
+        click.echo(f"Total cost: ${final_state.total_cost_usd:.4f}")
+
+        if final_state.results:
+            click.echo("\nResults:")
+            for block_id, result in final_state.results.items():
+                click.echo(f"  {block_id}: {result[:100]}...")
+
+    except FileNotFoundError as e:
+        click.echo(f"Error: File not found: {e}", err=True)
+        raise SystemExit(1)
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        raise SystemExit(1)
 
 
 # ── mcp-server ───────────────────────────────────────────────────────
