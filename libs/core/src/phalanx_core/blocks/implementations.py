@@ -4,7 +4,7 @@ Concrete block implementations for workflow composition.
 
 import asyncio
 import json
-from typing import Dict, List
+from typing import Callable, Dict, List, Optional, Union
 
 from phalanx_core.blocks.base import BaseBlock
 from phalanx_core.state import WorkflowState
@@ -315,6 +315,197 @@ class DebateBlock(BaseBlock):
                     {
                         "role": "system",
                         "content": f"[Block {self.block_id}] Debate completed: {self.iterations} rounds",
+                    }
+                ],
+            }
+        )
+
+
+class RouterBlock(BaseBlock):
+    """
+    Evaluate routing condition using Soul (LLM) or Callable (function).
+
+    Typical Use: Decision-making blocks that route workflow based on conditions.
+    Example (Soul): LLM evaluates proposal and returns "approved" or "rejected"
+    Example (Callable): Function checks state and returns routing decision
+    """
+
+    def __init__(
+        self,
+        block_id: str,
+        condition_evaluator: Union[Soul, Callable[[WorkflowState], str]],
+        runner: Optional[PhalanxTeamRunner] = None,
+    ):
+        """
+        Args:
+            block_id: Unique block identifier.
+            condition_evaluator: Either a Soul (LLM evaluates) or Callable (function evaluates).
+            runner: Required if condition_evaluator is Soul, optional otherwise.
+
+        Raises:
+            ValueError: If block_id is empty (from BaseBlock).
+            ValueError: If condition_evaluator is Soul but runner is None.
+        """
+        super().__init__(block_id)
+
+        # Validate runner requirement for Soul evaluator
+        if isinstance(condition_evaluator, Soul) and runner is None:
+            raise ValueError(
+                f"RouterBlock {block_id}: runner is required when condition_evaluator is Soul"
+            )
+
+        self.condition_evaluator = condition_evaluator
+        self.runner = runner
+
+    async def execute(self, state: WorkflowState) -> WorkflowState:
+        """
+        Evaluate routing condition and store decision.
+
+        Args:
+            state: If condition_evaluator is Soul, must have state.current_task set.
+
+        Returns:
+            New state with:
+            - results[block_id] = decision string (e.g., "approved", "rejected")
+            - metadata[f"{block_id}_decision"] = decision string (duplicate for downstream access)
+            - messages appended with routing decision summary
+
+        Raises:
+            ValueError: If condition_evaluator is Soul but current_task is None.
+        """
+        # Step 1: Evaluate condition based on type
+        if isinstance(self.condition_evaluator, Soul):
+            # Soul-based evaluation (LLM decides)
+            if state.current_task is None:
+                raise ValueError(
+                    f"RouterBlock {self.block_id}: state.current_task is None (required for Soul evaluator)"
+                )
+
+            # Execute routing task with Soul (runner guaranteed non-None by constructor validation)
+            assert self.runner is not None  # For mypy: validated in __init__
+            result = await self.runner.execute_task(state.current_task, self.condition_evaluator)
+            decision = result.output.strip()
+        else:
+            # Callable-based evaluation (function decides)
+            decision = self.condition_evaluator(state)
+
+        # Step 2: Return updated state with decision
+        return state.model_copy(
+            update={
+                "results": {**state.results, self.block_id: decision},
+                "metadata": {
+                    **state.metadata,
+                    f"{self.block_id}_decision": decision,
+                },
+                "messages": state.messages
+                + [
+                    {
+                        "role": "system",
+                        "content": f"[Block {self.block_id}] RouterBlock decision: {decision}",
+                    }
+                ],
+            }
+        )
+
+
+class AdvisorBlock(BaseBlock):
+    """
+    Analyze failure context from shared_memory and produce recommendations.
+
+    Typical Use: After RetryBlock exhausts retries, analyze errors and recommend fixes.
+    Example: AdvisorBlock reads retry_errors and produces actionable recommendation.
+    """
+
+    def __init__(
+        self,
+        block_id: str,
+        failure_context_keys: List[str],
+        advisor_soul: Soul,
+        runner: PhalanxTeamRunner,
+    ):
+        """
+        Args:
+            block_id: Unique block identifier.
+            failure_context_keys: Keys to read from state.shared_memory for analysis.
+            advisor_soul: Agent that performs failure analysis.
+            runner: Execution engine for running tasks.
+
+        Raises:
+            ValueError: If block_id is empty or failure_context_keys is empty.
+        """
+        super().__init__(block_id)
+        if not failure_context_keys:
+            raise ValueError(f"AdvisorBlock {block_id}: failure_context_keys cannot be empty")
+        self.failure_context_keys = failure_context_keys
+        self.advisor_soul = advisor_soul
+        self.runner = runner
+
+    async def execute(self, state: WorkflowState) -> WorkflowState:
+        """
+        Analyze failure context and produce recommendations.
+
+        Args:
+            state: Must have all failure_context_keys present in shared_memory.
+
+        Returns:
+            New state with:
+            - results[block_id] = recommendation text
+            - shared_memory[f"{block_id}_recommendation"] = recommendation text
+            - messages appended with advisor summary
+
+        Raises:
+            ValueError: If any failure_context_key missing from state.shared_memory.
+        """
+        # Step 1: Validate all context keys exist
+        missing_keys = [key for key in self.failure_context_keys if key not in state.shared_memory]
+        if missing_keys:
+            raise ValueError(
+                f"AdvisorBlock {self.block_id}: missing failure context keys: {missing_keys}. "
+                f"Available keys: {list(state.shared_memory.keys())}"
+            )
+
+        # Step 2: Gather error context
+        error_contexts = []
+        for key in self.failure_context_keys:
+            context_value = state.shared_memory[key]
+            # Handle both list and string values
+            if isinstance(context_value, list):
+                formatted = "\n".join([f"  - {item}" for item in context_value])
+            else:
+                formatted = str(context_value)
+            error_contexts.append(f"Context from '{key}':\n{formatted}")
+
+        combined_context = "\n\n".join(error_contexts)
+
+        # Step 3: Construct analysis task
+        analysis_instruction = f"""You are analyzing a workflow failure. Review the error context below and provide:
+1. Root cause analysis
+2. Recommended remediation steps
+3. Prevention strategies for future runs
+
+Error Context:
+{combined_context}
+
+Provide your analysis and recommendations in a structured format."""
+
+        analysis_task = Task(id=f"{self.block_id}_analysis", instruction=analysis_instruction)
+
+        # Step 4: Execute analysis
+        result = await self.runner.execute_task(analysis_task, self.advisor_soul)
+
+        # Step 5: Return updated state
+        return state.model_copy(
+            update={
+                "results": {**state.results, self.block_id: result.output},
+                "shared_memory": {
+                    **state.shared_memory,
+                    f"{self.block_id}_recommendation": result.output,
+                },
+                "messages": state.messages
+                + [
+                    {
+                        "role": "system",
+                        "content": f"[Block {self.block_id}] AdvisorBlock analyzed {len(self.failure_context_keys)} context(s)",
                     }
                 ],
             }
