@@ -2,7 +2,7 @@
 Phalanx Agent OS Core Engine
 """
 
-from .primitives import Soul, Task, Step, Skill
+from .primitives import Soul, Task, Step
 from .runner import PhalanxTeamRunner, ExecutionResult
 from .state import WorkflowState
 from .blocks.base import BaseBlock
@@ -12,18 +12,17 @@ from .blocks.implementations import (
     SynthesizeBlock,
     DebateBlock,
     RetryBlock,
-    AdvisorBlock,
-    ReplannerBlock,
+    TeamLeadBlock,
+    EngineeringManagerBlock,
     MessageBusBlock,
     RouterBlock,
 )
-from .blueprint import Blueprint
+from .workflow import Workflow
 
 __all__ = [
     "Soul",
     "Task",
     "Step",
-    "Skill",
     "PhalanxTeamRunner",
     "ExecutionResult",
     "WorkflowState",
@@ -33,9 +32,9 @@ __all__ = [
     "SynthesizeBlock",
     "DebateBlock",
     "RetryBlock",
-    "AdvisorBlock",
-    "ReplannerBlock",
+    "TeamLeadBlock",
+    "EngineeringManagerBlock",
     "MessageBusBlock",
     "RouterBlock",
-    "Blueprint",
+    "Workflow",
 ]

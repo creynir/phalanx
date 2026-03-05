@@ -1,5 +1,5 @@
 """
-Blueprint state machine for orchestrating block execution.
+Workflow state machine for orchestrating block execution.
 """
 
 from typing import Dict, List, Optional
@@ -7,7 +7,7 @@ from phalanx_core.state import WorkflowState
 from phalanx_core.blocks.base import BaseBlock
 
 
-class Blueprint:
+class Workflow:
     """
     Orchestrates block execution following a transition graph.
 
@@ -15,35 +15,35 @@ class Blueprint:
     Validation: Topology checks (entry exists, no dangling refs, acyclic).
 
     Example:
-        bp = Blueprint(name="research_pipeline")
-        bp.add_block(research_block)
-        bp.add_block(code_block)
-        bp.add_transition("research", "code")  # research -> code
-        bp.set_entry("research")
-        errors = bp.validate()
+        wf = Workflow(name="research_pipeline")
+        wf.add_block(research_block)
+        wf.add_block(code_block)
+        wf.add_transition("research", "code")  # research -> code
+        wf.set_entry("research")
+        errors = wf.validate()
         if errors:
-            raise ValueError(f"Invalid blueprint: {errors}")
-        final_state = await bp.run(initial_state)
+            raise ValueError(f"Invalid workflow: {errors}")
+        final_state = await wf.run(initial_state)
     """
 
     def __init__(self, name: str):
         """
         Args:
-            name: Blueprint identifier (for logging/debugging).
+            name: Workflow identifier (for logging/debugging).
 
         Raises:
             ValueError: If name is empty.
         """
         if not name:
-            raise ValueError("Blueprint name cannot be empty")
+            raise ValueError("Workflow name cannot be empty")
         self.name = name
         self._blocks: Dict[str, BaseBlock] = {}
         self._transitions: Dict[str, str] = {}  # from_block_id -> to_block_id
         self._entry_block_id: Optional[str] = None
 
-    def add_block(self, block: BaseBlock) -> "Blueprint":
+    def add_block(self, block: BaseBlock) -> "Workflow":
         """
-        Register a block in this blueprint.
+        Register a block in this workflow.
 
         Args:
             block: Block instance to add.
@@ -61,7 +61,7 @@ class Blueprint:
         self._blocks[block.block_id] = block
         return self
 
-    def add_transition(self, from_block_id: str, to_block_id: Optional[str]) -> "Blueprint":
+    def add_transition(self, from_block_id: str, to_block_id: Optional[str]) -> "Workflow":
         """
         Define transition from one block to another.
 
@@ -78,7 +78,7 @@ class Blueprint:
             ValueError: If from_block_id already has a transition defined.
 
         Note: Validation of block existence is deferred to validate() method.
-              This allows building blueprints in any order (add blocks after transitions).
+              This allows building workflows in any order (add blocks after transitions).
         """
         if from_block_id in self._transitions:
             raise ValueError(
@@ -90,7 +90,7 @@ class Blueprint:
         # If to_block_id is None, do NOT add entry to _transitions (terminal block)
         return self
 
-    def set_entry(self, block_id: str) -> "Blueprint":
+    def set_entry(self, block_id: str) -> "Workflow":
         """
         Set the starting block for execution.
 
@@ -107,7 +107,7 @@ class Blueprint:
 
     def validate(self) -> List[str]:
         """
-        Validate blueprint topology. Returns list of error messages (empty if valid).
+        Validate workflow topology. Returns list of error messages (empty if valid).
 
         Checks:
         1. Entry block is set and exists in _blocks
@@ -115,12 +115,12 @@ class Blueprint:
         3. No cycles (DFS-based cycle detection)
 
         Returns:
-            List of error strings. Empty list means blueprint is valid.
+            List of error strings. Empty list means workflow is valid.
 
         Example:
-            errors = blueprint.validate()
+            errors = workflow.validate()
             if errors:
-                raise ValueError(f"Blueprint invalid: {errors}")
+                raise ValueError(f"Workflow invalid: {errors}")
         """
         errors: List[str] = []
 
@@ -201,7 +201,7 @@ class Blueprint:
 
     async def run(self, initial_state: WorkflowState) -> WorkflowState:
         """
-        Execute blueprint starting from entry block, following transitions until terminal.
+        Execute workflow starting from entry block, following transitions until terminal.
 
         Args:
             initial_state: Starting workflow state.
@@ -210,13 +210,13 @@ class Blueprint:
             Final workflow state after all blocks execute.
 
         Raises:
-            ValueError: If blueprint fails validation.
+            ValueError: If workflow fails validation.
             Exception: If any block execution fails (propagates from block.execute()).
         """
         # Validate before execution
         errors = self.validate()
         if errors:
-            raise ValueError(f"Cannot run invalid blueprint '{self.name}': {errors}")
+            raise ValueError(f"Cannot run invalid workflow '{self.name}': {errors}")
 
         current_block_id = self._entry_block_id
         state = initial_state

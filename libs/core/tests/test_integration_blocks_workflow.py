@@ -1,8 +1,8 @@
 """
-Integration tests for blocks + blueprint interactions.
+Integration tests for blocks + workflow interactions.
 
 PRIORITY 1: Tests conflict resolution area (implementations.py merge)
-PRIORITY 2: Tests cross-feature interactions (Blueprint orchestrating blocks)
+PRIORITY 2: Tests cross-feature interactions (Workflow orchestrating blocks)
 PRIORITY 3: Tests multi-block workflow scenarios
 """
 
@@ -19,7 +19,7 @@ from phalanx_core.blocks.implementations import (
     SynthesizeBlock,
     DebateBlock,
 )
-from phalanx_core.blueprint import Blueprint
+from phalanx_core.workflow import Workflow
 
 
 @pytest.fixture
@@ -119,16 +119,16 @@ async def test_blocks_share_state_correctly(mock_runner, sample_souls):
 
 # ============================================================================
 # PRIORITY 2: CROSS-FEATURE INTERACTION TESTS
-# Test Blueprint orchestrating different block types
+# Test Workflow orchestrating different block types
 # ============================================================================
 
 
 @pytest.mark.asyncio
-async def test_blueprint_linear_to_fanout_workflow(mock_runner, sample_souls):
+async def test_workflow_linear_to_fanout_workflow(mock_runner, sample_souls):
     """
-    CROSS-FEATURE TEST: Blueprint orchestrates Linear → FanOut.
+    CROSS-FEATURE TEST: Workflow orchestrates Linear → FanOut.
 
-    Tests interaction between Blueprint state machine and block execution,
+    Tests interaction between Workflow state machine and block execution,
     verifying state propagation across block types.
     """
     # Setup mock responses
@@ -139,8 +139,8 @@ async def test_blueprint_linear_to_fanout_workflow(mock_runner, sample_souls):
         ExecutionResult(task_id="task2", soul_id="reviewer3", output="Critique from R3"),
     ]
 
-    # Build blueprint
-    bp = Blueprint("research_review_pipeline")
+    # Build workflow
+    wf = Workflow("research_review_pipeline")
 
     linear = LinearBlock("research", sample_souls["researcher"], mock_runner)
     fanout = FanOutBlock(
@@ -149,17 +149,17 @@ async def test_blueprint_linear_to_fanout_workflow(mock_runner, sample_souls):
         mock_runner,
     )
 
-    bp.add_block(linear).add_block(fanout)
-    bp.add_transition("research", "reviews").add_transition("reviews", None)
-    bp.set_entry("research")
+    wf.add_block(linear).add_block(fanout)
+    wf.add_transition("research", "reviews").add_transition("reviews", None)
+    wf.set_entry("research")
 
-    # Validate blueprint
-    errors = bp.validate()
-    assert errors == [], f"Blueprint validation failed: {errors}"
+    # Validate workflow
+    errors = wf.validate()
+    assert errors == [], f"Workflow validation failed: {errors}"
 
     # Execute
     initial_state = WorkflowState(current_task=Task(id="task1", instruction="Research AI"))
-    final_state = await bp.run(initial_state)
+    final_state = await wf.run(initial_state)
 
     # Verify both blocks executed
     assert "research" in final_state.results
@@ -174,9 +174,9 @@ async def test_blueprint_linear_to_fanout_workflow(mock_runner, sample_souls):
 
 
 @pytest.mark.asyncio
-async def test_blueprint_fanout_to_synthesize_workflow(mock_runner, sample_souls):
+async def test_workflow_fanout_to_synthesize_workflow(mock_runner, sample_souls):
     """
-    CROSS-FEATURE TEST: Blueprint orchestrates FanOut → Synthesize.
+    CROSS-FEATURE TEST: Workflow orchestrates FanOut → Synthesize.
 
     Tests that SynthesizeBlock can read FanOut's JSON output from state.results
     and combine multiple inputs correctly.
@@ -192,21 +192,21 @@ async def test_blueprint_fanout_to_synthesize_workflow(mock_runner, sample_souls
         ),
     ]
 
-    # Build blueprint
-    bp = Blueprint("review_synthesis_pipeline")
+    # Build workflow
+    wf = Workflow("review_synthesis_pipeline")
 
     fanout = FanOutBlock(
         "fanout", [sample_souls["reviewer1"], sample_souls["reviewer2"]], mock_runner
     )
     synthesize = SynthesizeBlock("synthesis", ["fanout"], sample_souls["synthesizer"], mock_runner)
 
-    bp.add_block(fanout).add_block(synthesize)
-    bp.add_transition("fanout", "synthesis").add_transition("synthesis", None)
-    bp.set_entry("fanout")
+    wf.add_block(fanout).add_block(synthesize)
+    wf.add_transition("fanout", "synthesis").add_transition("synthesis", None)
+    wf.set_entry("fanout")
 
     # Execute
     initial_state = WorkflowState(current_task=Task(id="t1", instruction="Review proposal"))
-    final_state = await bp.run(initial_state)
+    final_state = await wf.run(initial_state)
 
     # Verify SynthesizeBlock received FanOut output
     assert "fanout" in final_state.results
@@ -221,9 +221,9 @@ async def test_blueprint_fanout_to_synthesize_workflow(mock_runner, sample_souls
 
 
 @pytest.mark.asyncio
-async def test_blueprint_debate_stores_conclusion_in_shared_memory(mock_runner, sample_souls):
+async def test_workflow_debate_stores_conclusion_in_shared_memory(mock_runner, sample_souls):
     """
-    CROSS-FEATURE TEST: Blueprint + DebateBlock interaction with shared_memory.
+    CROSS-FEATURE TEST: Workflow + DebateBlock interaction with shared_memory.
 
     Tests that DebateBlock correctly uses Task.context and stores conclusion
     in shared_memory, which persists across the workflow.
@@ -236,20 +236,20 @@ async def test_blueprint_debate_stores_conclusion_in_shared_memory(mock_runner, 
         ExecutionResult(task_id="d1_r2_b", soul_id="critic", output="Final critique"),
     ]
 
-    # Build blueprint with single debate block
-    bp = Blueprint("debate_pipeline")
+    # Build workflow with single debate block
+    wf = Workflow("debate_pipeline")
     debate = DebateBlock(
         "debate", sample_souls["proposer"], sample_souls["critic"], iterations=2, runner=mock_runner
     )
-    bp.add_block(debate)
-    bp.add_transition("debate", None)  # Terminal
-    bp.set_entry("debate")
+    wf.add_block(debate)
+    wf.add_transition("debate", None)  # Terminal
+    wf.set_entry("debate")
 
     # Execute
     initial_state = WorkflowState(
         current_task=Task(id="main", instruction="Should we adopt microservices?")
     )
-    final_state = await bp.run(initial_state)
+    final_state = await wf.run(initial_state)
 
     # Verify transcript in results
     assert "debate" in final_state.results
@@ -269,7 +269,7 @@ async def test_blueprint_debate_stores_conclusion_in_shared_memory(mock_runner, 
 
 
 @pytest.mark.asyncio
-async def test_blueprint_synthesize_with_multiple_block_types(mock_runner, sample_souls):
+async def test_workflow_synthesize_with_multiple_block_types(mock_runner, sample_souls):
     """
     CROSS-FEATURE TEST: SynthesizeBlock reads from Linear + FanOut + Debate.
 
@@ -292,8 +292,8 @@ async def test_blueprint_synthesize_with_multiple_block_types(mock_runner, sampl
         ),
     ]
 
-    # Build complex blueprint
-    bp = Blueprint("multi_block_synthesis")
+    # Build complex workflow
+    wf = Workflow("multi_block_synthesis")
 
     linear = LinearBlock("research", sample_souls["researcher"], mock_runner)
     fanout = FanOutBlock(
@@ -304,16 +304,16 @@ async def test_blueprint_synthesize_with_multiple_block_types(mock_runner, sampl
         "final", ["research", "reviews", "debate"], sample_souls["synthesizer"], mock_runner
     )
 
-    bp.add_block(linear).add_block(fanout).add_block(debate).add_block(synthesize)
-    bp.add_transition("research", "reviews")
-    bp.add_transition("reviews", "debate")
-    bp.add_transition("debate", "final")
-    bp.add_transition("final", None)
-    bp.set_entry("research")
+    wf.add_block(linear).add_block(fanout).add_block(debate).add_block(synthesize)
+    wf.add_transition("research", "reviews")
+    wf.add_transition("reviews", "debate")
+    wf.add_transition("debate", "final")
+    wf.add_transition("final", None)
+    wf.set_entry("research")
 
     # Execute
     initial_state = WorkflowState(current_task=Task(id="t1", instruction="Analyze topic"))
-    final_state = await bp.run(initial_state)
+    final_state = await wf.run(initial_state)
 
     # Verify all 4 blocks produced results
     assert "research" in final_state.results
@@ -373,7 +373,7 @@ async def test_complete_research_review_synthesis_workflow(mock_runner, sample_s
     ]
 
     # Build workflow
-    bp = Blueprint("research_workflow")
+    wf = Workflow("research_workflow")
 
     research_block = LinearBlock("research", sample_souls["researcher"], mock_runner)
     review_block = FanOutBlock(
@@ -385,11 +385,11 @@ async def test_complete_research_review_synthesis_workflow(mock_runner, sample_s
         "final_report", ["research", "peer_reviews"], sample_souls["synthesizer"], mock_runner
     )
 
-    bp.add_block(research_block).add_block(review_block).add_block(synthesis_block)
-    bp.add_transition("research", "peer_reviews")
-    bp.add_transition("peer_reviews", "final_report")
-    bp.add_transition("final_report", None)
-    bp.set_entry("research")
+    wf.add_block(research_block).add_block(review_block).add_block(synthesis_block)
+    wf.add_transition("research", "peer_reviews")
+    wf.add_transition("peer_reviews", "final_report")
+    wf.add_transition("final_report", None)
+    wf.set_entry("research")
 
     # Execute
     initial_state = WorkflowState(
@@ -398,7 +398,7 @@ async def test_complete_research_review_synthesis_workflow(mock_runner, sample_s
         ),
         metadata={"workflow_type": "research_pipeline"},
     )
-    final_state = await bp.run(initial_state)
+    final_state = await wf.run(initial_state)
 
     # Verify complete workflow execution
     assert len(final_state.results) == 3
@@ -417,7 +417,7 @@ async def test_complete_research_review_synthesis_workflow(mock_runner, sample_s
 
 
 @pytest.mark.asyncio
-async def test_state_immutability_across_blueprint_execution(mock_runner, sample_souls):
+async def test_state_immutability_across_workflow_execution(mock_runner, sample_souls):
     """
     STATE IMMUTABILITY TEST: Verify blocks don't mutate state in-place.
 
@@ -430,12 +430,12 @@ async def test_state_immutability_across_blueprint_execution(mock_runner, sample
     ]
 
     # Build simple workflow
-    bp = Blueprint("immutability_test")
+    wf = Workflow("immutability_test")
     block1 = LinearBlock("b1", sample_souls["researcher"], mock_runner)
     block2 = LinearBlock("b2", sample_souls["reviewer1"], mock_runner)
-    bp.add_block(block1).add_block(block2)
-    bp.add_transition("b1", "b2").add_transition("b2", None)
-    bp.set_entry("b1")
+    wf.add_block(block1).add_block(block2)
+    wf.add_transition("b1", "b2").add_transition("b2", None)
+    wf.set_entry("b1")
 
     # Execute and capture states
     initial_state = WorkflowState(
@@ -446,7 +446,7 @@ async def test_state_immutability_across_blueprint_execution(mock_runner, sample
     initial_state_id = id(initial_state)
     initial_results_id = id(initial_state.results)
 
-    final_state = await bp.run(initial_state)
+    final_state = await wf.run(initial_state)
 
     # Verify new state objects created (not mutated)
     assert id(final_state) != initial_state_id
@@ -464,11 +464,11 @@ async def test_state_immutability_across_blueprint_execution(mock_runner, sample
 
 
 @pytest.mark.asyncio
-async def test_error_propagation_through_blueprint(mock_runner, sample_souls):
+async def test_error_propagation_through_workflow(mock_runner, sample_souls):
     """
-    ERROR HANDLING TEST: Verify exceptions propagate through blueprint.
+    ERROR HANDLING TEST: Verify exceptions propagate through workflow.
 
-    Tests that if a block raises an exception, the blueprint execution stops
+    Tests that if a block raises an exception, the workflow execution stops
     and the error propagates to the caller.
     """
     # First block succeeds, second raises exception
@@ -477,15 +477,15 @@ async def test_error_propagation_through_blueprint(mock_runner, sample_souls):
         Exception("Simulated execution failure"),
     ]
 
-    bp = Blueprint("error_test")
+    wf = Workflow("error_test")
     block1 = LinearBlock("b1", sample_souls["researcher"], mock_runner)
     block2 = LinearBlock("b2", sample_souls["reviewer1"], mock_runner)
-    bp.add_block(block1).add_block(block2)
-    bp.add_transition("b1", "b2").add_transition("b2", None)
-    bp.set_entry("b1")
+    wf.add_block(block1).add_block(block2)
+    wf.add_transition("b1", "b2").add_transition("b2", None)
+    wf.set_entry("b1")
 
     initial_state = WorkflowState(current_task=Task(id="t1", instruction="Test"))
 
     # Verify exception propagates
     with pytest.raises(Exception, match="Simulated execution failure"):
-        await bp.run(initial_state)
+        await wf.run(initial_state)

@@ -2,12 +2,12 @@
 Integration tests for advanced blocks interaction patterns.
 
 Tests two key integration patterns:
-1. RetryBlock → AdvisorBlock: Error recovery workflows demonstrating how blocks
+1. RetryBlock → TeamLeadBlock: Error recovery workflows demonstrating how blocks
    work together to handle failures and provide intelligent recovery recommendations.
 2. MessageBusBlock → RouterBlock: Multi-agent consensus workflows demonstrating
    how MessageBus produces consensus that Router then evaluates for routing decision.
 
-Uses real Blueprint execution with mocked runner.execute_task calls.
+Uses real Workflow execution with mocked runner.execute_task calls.
 """
 
 import json
@@ -19,12 +19,12 @@ from phalanx_core.primitives import Soul, Task
 from phalanx_core.blocks.base import BaseBlock
 from phalanx_core.blocks.implementations import (
     RetryBlock,
-    AdvisorBlock,
+    TeamLeadBlock,
     MessageBusBlock,
     RouterBlock,
 )
 from phalanx_core.runner import ExecutionResult
-from phalanx_core.blueprint import Blueprint
+from phalanx_core.workflow import Workflow
 
 
 # ===== Mock Blocks for Integration Tests =====
@@ -85,7 +85,7 @@ def mock_runner():
 
 
 @pytest.fixture
-def advisor_soul():
+def team_lead_soul():
     """Sample advisor soul for testing."""
     return Soul(
         id="advisor",
@@ -113,17 +113,17 @@ def sample_souls():
     }
 
 
-# ===== RetryBlock → AdvisorBlock Integration Tests =====
+# ===== RetryBlock → TeamLeadBlock Integration Tests =====
 
 
 @pytest.mark.asyncio
-async def test_retry_advisor_recovery(mock_runner, advisor_soul):
+async def test_retry_advisor_recovery(mock_runner, team_lead_soul):
     """
-    AC-1: Integration test: RetryBlock exhausts retries, AdvisorBlock reads retry_errors
+    AC-1: Integration test: RetryBlock exhausts retries, TeamLeadBlock reads retry_errors
     and produces recommendation. Demonstrates error recovery workflow pattern.
 
-    AC-2: Integration uses Blueprint to handle exception from RetryBlock and route to AdvisorBlock.
-    AC-3: AdvisorBlock's failure_context_keys includes '{retry_id}_retry_errors'.
+    AC-2: Integration uses Blueprint to handle exception from RetryBlock and route to TeamLeadBlock.
+    AC-3: TeamLeadBlock's failure_context_keys includes '{retry_id}_retry_errors'.
     AC-4: Final state contains advisor recommendation in results.
     AC-5: Test demonstrates error recovery workflow pattern.
     """
@@ -136,11 +136,11 @@ async def test_retry_advisor_recovery(mock_runner, advisor_soul):
         provide_error_context=True,
     )
 
-    # Setup: Create AdvisorBlock that reads retry errors
-    advisor_block = AdvisorBlock(
+    # Setup: Create TeamLeadBlock that reads retry errors
+    advisor_block = TeamLeadBlock(
         block_id="advisor1",
         failure_context_keys=["retry1_retry_errors"],
-        advisor_soul=advisor_soul,
+        team_lead_soul=team_lead_soul,
         runner=mock_runner,
     )
 
@@ -153,7 +153,7 @@ async def test_retry_advisor_recovery(mock_runner, advisor_soul):
         "3) Review timeout settings. Prevention: Implement circuit breaker pattern.",
     )
 
-    # Setup: Create blueprint with error handling workflow
+    # Setup: Create workflow with error handling workflow
     # Note: We manually orchestrate retry -> advisor since Blueprint doesn't support
     # exception handling transitions (that would be over-engineering for Phase 1.2)
     task = Task(id="main_task", instruction="Process API request")
@@ -210,8 +210,8 @@ async def test_retry_advisor_recovery(mock_runner, advisor_soul):
     assert "Attempt 2/3: RuntimeError: Mock failure on attempt 2" in retry_errors[1]
     assert "Attempt 3/3: RuntimeError: Mock failure on attempt 3" in retry_errors[2]
 
-    # Phase 2: Execute AdvisorBlock to analyze failures
-    # AC-3: AdvisorBlock reads from failure_context_keys including retry_errors
+    # Phase 2: Execute TeamLeadBlock to analyze failures
+    # AC-3: TeamLeadBlock reads from failure_context_keys including retry_errors
     result_state = await advisor_block.execute(state)
 
     # AC-4: Verify final state contains advisor recommendation in results
@@ -229,7 +229,7 @@ async def test_retry_advisor_recovery(mock_runner, advisor_soul):
     # Verify message logged
     assert len(result_state.messages) == 1
     assert "[Block advisor1]" in result_state.messages[0]["content"]
-    assert "AdvisorBlock analyzed 1 context(s)" in result_state.messages[0]["content"]
+    assert "TeamLeadBlock analyzed 1 context(s)" in result_state.messages[0]["content"]
 
     # AC-5: Verify error recovery workflow pattern demonstrated
     # Pattern: Retry exhaustion → Error context captured → Analysis performed → Recommendation produced
@@ -243,13 +243,13 @@ async def test_retry_advisor_recovery(mock_runner, advisor_soul):
 
 
 @pytest.mark.asyncio
-async def test_retry_advisor_with_blueprint_orchestration(mock_runner, advisor_soul):
+async def test_retry_advisor_with_workflow_orchestration(mock_runner, team_lead_soul):
     """
     AC-2: Demonstrate using Blueprint to orchestrate retry failure → advisor analysis.
 
     Note: Since Blueprint doesn't support exception-based transitions (deferred to Phase 2),
     this test shows how to manually orchestrate the pattern. In production, users would
-    wrap RetryBlock execution in try/except and conditionally execute AdvisorBlock.
+    wrap RetryBlock execution in try/except and conditionally execute TeamLeadBlock.
     """
     # Setup blocks
     failing_block = MockAlwaysFailingBlock("api_call")
@@ -268,15 +268,15 @@ async def test_retry_advisor_with_blueprint_orchestration(mock_runner, advisor_s
     )
 
     # Setup advisor block
-    advisor_block = AdvisorBlock(
+    advisor_block = TeamLeadBlock(
         block_id="error_advisor",
         failure_context_keys=["retry_api_retry_errors"],
-        advisor_soul=advisor_soul,
+        team_lead_soul=team_lead_soul,
         runner=mock_runner,
     )
 
-    # Create blueprint for normal success path
-    bp = Blueprint("api_workflow")
+    # Create workflow for normal success path
+    bp = Workflow("api_workflow")
     bp.add_block(retry_block)
     bp.add_transition("retry_api", None)
     bp.set_entry("retry_api")
@@ -330,9 +330,9 @@ async def test_retry_advisor_with_blueprint_orchestration(mock_runner, advisor_s
 
 
 @pytest.mark.asyncio
-async def test_multiple_retry_errors_analyzed_together(mock_runner, advisor_soul):
+async def test_multiple_retry_errors_analyzed_together(mock_runner, team_lead_soul):
     """
-    Test AdvisorBlock analyzing multiple failure contexts together.
+    Test TeamLeadBlock analyzing multiple failure contexts together.
 
     Demonstrates pattern where multiple retryable operations fail and
     advisor analyzes all failures together for comprehensive recommendation.
@@ -355,10 +355,10 @@ async def test_multiple_retry_errors_analyzed_together(mock_runner, advisor_soul
     )
 
     # Setup advisor to analyze both
-    advisor_block = AdvisorBlock(
+    advisor_block = TeamLeadBlock(
         block_id="multi_advisor",
         failure_context_keys=["retry_op1_retry_errors", "retry_op2_retry_errors"],
-        advisor_soul=advisor_soul,
+        team_lead_soul=team_lead_soul,
         runner=mock_runner,
     )
 
@@ -418,9 +418,9 @@ async def test_multiple_retry_errors_analyzed_together(mock_runner, advisor_soul
 
 
 @pytest.mark.asyncio
-async def test_advisor_error_context_format(mock_runner, advisor_soul):
+async def test_advisor_error_context_format(mock_runner, team_lead_soul):
     """
-    Verify AdvisorBlock properly formats list-type error context for LLM analysis.
+    Verify TeamLeadBlock properly formats list-type error context for LLM analysis.
 
     Tests that retry_errors (list) is formatted with bullet points for readability.
     """
@@ -433,10 +433,10 @@ async def test_advisor_error_context_format(mock_runner, advisor_soul):
         provide_error_context=True,
     )
 
-    advisor_block = AdvisorBlock(
+    advisor_block = TeamLeadBlock(
         block_id="format_advisor",
         failure_context_keys=["retry_test_retry_errors"],
-        advisor_soul=advisor_soul,
+        team_lead_soul=team_lead_soul,
         runner=mock_runner,
     )
 
@@ -494,7 +494,7 @@ async def test_messagebus_router_workflow(mock_runner, sample_souls):
     - MessageBusBlock produces consensus in shared_memory
     - RouterBlock reads consensus via callable evaluator from shared_memory
     - Final state contains both messagebus transcript and router decision
-    - Uses real Blueprint execution without mocks (Blueprint.add_block, Blueprint.run)
+    - Uses real Workflow execution without mocks (Blueprint.add_block, Blueprint.run)
     """
     # Setup mock responses for MessageBusBlock (2 souls × 2 iterations = 4 calls)
     call_count = [0]
@@ -512,7 +512,7 @@ async def test_messagebus_router_workflow(mock_runner, sample_souls):
     mock_runner.execute_task.side_effect = create_messagebus_result
 
     # Build Blueprint with MessageBusBlock → RouterBlock
-    bp = Blueprint("messagebus_router_workflow")
+    bp = Workflow("messagebus_router_workflow")
 
     # Create MessageBusBlock with 2 souls, 2 iterations
     messagebus_block = MessageBusBlock(
@@ -534,12 +534,12 @@ async def test_messagebus_router_workflow(mock_runner, sample_souls):
 
     router_block = RouterBlock("router1", evaluate_consensus, runner=None)
 
-    # Add blocks to blueprint
+    # Add blocks to workflow
     bp.add_block(messagebus_block).add_block(router_block)
     bp.add_transition("messagebus1", "router1").add_transition("router1", None)
     bp.set_entry("messagebus1")
 
-    # Validate blueprint
+    # Validate workflow
     errors = bp.validate()
     assert errors == [], f"Blueprint validation failed: {errors}"
 
@@ -579,13 +579,13 @@ async def test_messagebus_router_workflow(mock_runner, sample_souls):
 
 
 @pytest.mark.asyncio
-async def test_retry_advisor_recovery_blueprint(mock_runner, sample_souls):
+async def test_retry_advisor_recovery_workflow(mock_runner, sample_souls):
     """
-    AC-2: Integration test demonstrating RetryBlock → AdvisorBlock recovery pattern.
+    AC-2: Integration test demonstrating RetryBlock → TeamLeadBlock recovery pattern.
     - RetryBlock wraps failing block, exhausts retries, stores errors in shared_memory
-    - AdvisorBlock reads errors from shared_memory and produces recommendation
+    - TeamLeadBlock reads errors from shared_memory and produces recommendation
     - Final state contains retry errors and advisor recommendation
-    - Uses real Blueprint execution
+    - Uses real Workflow execution
     """
     # Create a block that always fails
     failing_block = MockFailingBlock("inner1", fail_count=999)  # Always fails
@@ -593,23 +593,23 @@ async def test_retry_advisor_recovery_blueprint(mock_runner, sample_souls):
     # Wrap with RetryBlock (max_retries=2, so 3 total attempts)
     retry_block = RetryBlock("retry1", failing_block, max_retries=2, provide_error_context=True)
 
-    # Setup mock for AdvisorBlock
+    # Setup mock for TeamLeadBlock
     mock_runner.execute_task.return_value = ExecutionResult(
         task_id="advisor_analysis",
         soul_id="advisor",
         output="Root cause: Persistent failure. Recommendation: Check dependencies and retry with exponential backoff.",
     )
 
-    # Create AdvisorBlock that reads retry errors
-    advisor_block = AdvisorBlock(
+    # Create TeamLeadBlock that reads retry errors
+    advisor_block = TeamLeadBlock(
         "advisor1",
         failure_context_keys=["retry1_retry_errors"],
-        advisor_soul=sample_souls["advisor"],
+        team_lead_soul=sample_souls["advisor"],
         runner=mock_runner,
     )
 
-    # Build Blueprint: RetryBlock → AdvisorBlock
-    bp = Blueprint("retry_advisor_workflow")
+    # Build Blueprint: RetryBlock → TeamLeadBlock
+    bp = Workflow("retry_advisor_workflow")
     bp.add_block(retry_block).add_block(advisor_block)
     bp.add_transition("retry1", "advisor1").add_transition("advisor1", None)
     bp.set_entry("retry1")
@@ -629,7 +629,7 @@ async def test_retry_advisor_recovery_blueprint(mock_runner, sample_souls):
 
     # For this integration test, we need to test the pattern differently:
     # Since RetryBlock raises after exhausting retries, we test a successful recovery scenario
-    # where RetryBlock succeeds after retries and AdvisorBlock analyzes the errors that were overcome
+    # where RetryBlock succeeds after retries and TeamLeadBlock analyzes the errors that were overcome
 
     # Create a block that fails twice then succeeds
     recovering_block = MockFailingBlock("inner2", fail_count=2)
@@ -637,16 +637,16 @@ async def test_retry_advisor_recovery_blueprint(mock_runner, sample_souls):
         "retry2", recovering_block, max_retries=3, provide_error_context=True
     )
 
-    # Create AdvisorBlock that reads retry errors (even after success)
-    advisor_block2 = AdvisorBlock(
+    # Create TeamLeadBlock that reads retry errors (even after success)
+    advisor_block2 = TeamLeadBlock(
         "advisor2",
         failure_context_keys=["retry2_retry_errors"],
-        advisor_soul=sample_souls["advisor"],
+        team_lead_soul=sample_souls["advisor"],
         runner=mock_runner,
     )
 
-    # Build Blueprint: RetryBlock → AdvisorBlock
-    bp2 = Blueprint("retry_advisor_recovery_workflow")
+    # Build Blueprint: RetryBlock → TeamLeadBlock
+    bp2 = Workflow("retry_advisor_recovery_workflow")
     bp2.add_block(retry_block_recovering).add_block(advisor_block2)
     bp2.add_transition("retry2", "advisor2").add_transition("advisor2", None)
     bp2.set_entry("retry2")
@@ -665,7 +665,7 @@ async def test_retry_advisor_recovery_blueprint(mock_runner, sample_souls):
     assert "Attempt 1/4: RuntimeError: Mock failure 1" in errors[0]
     assert "Attempt 2/4: RuntimeError: Mock failure 2" in errors[1]
 
-    # Verify AdvisorBlock analyzed the errors
+    # Verify TeamLeadBlock analyzed the errors
     assert "advisor2" in final_state.results
     assert "Root cause" in final_state.results["advisor2"]
     assert "Recommendation" in final_state.results["advisor2"]
@@ -679,7 +679,7 @@ async def test_retry_advisor_recovery_blueprint(mock_runner, sample_souls):
     retry_msg = [m for m in final_state.messages if "RetryBlock succeeded" in m["content"]][0]
     assert "succeeded after 3 attempt(s)" in retry_msg["content"]
 
-    advisor_msg = [m for m in final_state.messages if "AdvisorBlock analyzed" in m["content"]][0]
+    advisor_msg = [m for m in final_state.messages if "TeamLeadBlock analyzed" in m["content"]][0]
     assert "analyzed 1 context(s)" in advisor_msg["content"]
 
 
@@ -710,7 +710,7 @@ async def test_messagebus_router_with_soul_evaluator(mock_runner, sample_souls):
     mock_runner.execute_task.side_effect = create_result
 
     # Build Blueprint
-    bp = Blueprint("messagebus_router_soul_workflow")
+    bp = Workflow("messagebus_router_soul_workflow")
 
     messagebus_block = MessageBusBlock(
         "messagebus2",
