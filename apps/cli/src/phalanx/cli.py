@@ -1181,13 +1181,13 @@ def run_cmd(ctx, workflow_file, task_file):
     --task TASK_FILE: Path to task YAML file
     """
     import asyncio
-    from phalanx_core.yaml.parser import parse_workflow_yaml, parse_task_yaml
+    from phalanx_core.yaml.parser import parse_workflow_yaml, parse_action_yaml
     from phalanx_core.state import WorkflowState
 
     try:
         # Load workflow and task
         workflow = parse_workflow_yaml(workflow_file)
-        task = parse_task_yaml(task_file)
+        task = parse_action_yaml(task_file)
 
         # Initialize state with the task
         initial_state = WorkflowState(current_task=task)

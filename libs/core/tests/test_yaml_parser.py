@@ -12,7 +12,7 @@ import pytest
 from pydantic import ValidationError
 from phalanx_core.yaml.parser import (
     parse_workflow_yaml,
-    parse_task_yaml,
+    parse_action_yaml,
     BUILT_IN_SOULS,
     BLOCK_TYPE_REGISTRY,
 )
@@ -743,130 +743,130 @@ workflow:
 
 
 class TestParseTaskYAML:
-    """Tests for parse_task_yaml function."""
+    """Tests for parse_action_yaml function."""
 
     def test_parse_task_yaml_from_yaml_string_with_all_fields(self):
-        """AC-1: parse_task_yaml accepts YAML string with id, instruction, context."""
+        """AC-1: parse_action_yaml accepts YAML string with id, instruction, context."""
         yaml_content = """
 id: task_1
 instruction: "Review this code for bugs"
 context: "This is a Python function with a potential off-by-one error"
 """
-        task = parse_task_yaml(yaml_content)
+        task = parse_action_yaml(yaml_content)
         assert isinstance(task, Action)
         assert task.id == "task_1"
         assert task.instruction == "Review this code for bugs"
         assert task.context == "This is a Python function with a potential off-by-one error"
 
     def test_parse_task_yaml_from_yaml_string_without_context(self):
-        """AC-2: parse_task_yaml handles optional context field."""
+        """AC-2: parse_action_yaml handles optional context field."""
         yaml_content = """
 id: task_2
 instruction: "Summarize the main points"
 """
-        task = parse_task_yaml(yaml_content)
+        task = parse_action_yaml(yaml_content)
         assert isinstance(task, Action)
         assert task.id == "task_2"
         assert task.instruction == "Summarize the main points"
         assert task.context is None
 
     def test_parse_task_yaml_from_dict_with_all_fields(self):
-        """AC-3: parse_task_yaml accepts dict with id, instruction, context."""
+        """AC-3: parse_action_yaml accepts dict with id, instruction, context."""
         task_dict = {
             "id": "task_3",
             "instruction": "Write unit tests",
             "context": "Test coverage should be at least 80%",
         }
-        task = parse_task_yaml(task_dict)
+        task = parse_action_yaml(task_dict)
         assert isinstance(task, Action)
         assert task.id == "task_3"
         assert task.instruction == "Write unit tests"
         assert task.context == "Test coverage should be at least 80%"
 
     def test_parse_task_yaml_from_dict_without_context(self):
-        """AC-4: parse_task_yaml handles optional context in dict."""
+        """AC-4: parse_action_yaml handles optional context in dict."""
         task_dict = {
             "id": "task_4",
             "instruction": "Generate API documentation",
         }
-        task = parse_task_yaml(task_dict)
+        task = parse_action_yaml(task_dict)
         assert isinstance(task, Action)
         assert task.id == "task_4"
         assert task.instruction == "Generate API documentation"
         assert task.context is None
 
     def test_parse_task_yaml_missing_id_raises_validation_error(self):
-        """AC-5: parse_task_yaml raises ValidationError when id is missing."""
+        """AC-5: parse_action_yaml raises ValidationError when id is missing."""
         yaml_content = """
 instruction: "Do something"
 context: "Some context"
 """
         with pytest.raises(ValidationError):
-            parse_task_yaml(yaml_content)
+            parse_action_yaml(yaml_content)
 
     def test_parse_task_yaml_missing_instruction_raises_validation_error(self):
-        """AC-6: parse_task_yaml raises ValidationError when instruction is missing."""
+        """AC-6: parse_action_yaml raises ValidationError when instruction is missing."""
         yaml_content = """
 id: task_5
 context: "Some context"
 """
         with pytest.raises(ValidationError):
-            parse_task_yaml(yaml_content)
+            parse_action_yaml(yaml_content)
 
     def test_parse_task_yaml_missing_both_required_fields_raises_validation_error(self):
-        """AC-7: parse_task_yaml raises ValidationError when both required fields missing."""
+        """AC-7: parse_action_yaml raises ValidationError when both required fields missing."""
         yaml_content = """
 context: "Some context"
 """
         with pytest.raises(ValidationError):
-            parse_task_yaml(yaml_content)
+            parse_action_yaml(yaml_content)
 
     def test_parse_task_yaml_empty_dict_raises_validation_error(self):
-        """AC-8: parse_task_yaml raises ValidationError for empty dict."""
+        """AC-8: parse_action_yaml raises ValidationError for empty dict."""
         with pytest.raises(ValidationError):
-            parse_task_yaml({})
+            parse_action_yaml({})
 
     def test_parse_task_yaml_invalid_yaml_raises_error(self):
-        """AC-9: parse_task_yaml raises error for syntactically invalid YAML."""
+        """AC-9: parse_action_yaml raises error for syntactically invalid YAML."""
         yaml_content = """
 id: task
 instruction: [invalid yaml structure
 """
         with pytest.raises(Exception):  # yaml.YAMLError
-            parse_task_yaml(yaml_content)
+            parse_action_yaml(yaml_content)
 
     def test_parse_task_yaml_wrong_type_for_id_raises_validation_error(self):
-        """AC-10: parse_task_yaml raises ValidationError when id is wrong type."""
+        """AC-10: parse_action_yaml raises ValidationError when id is wrong type."""
         task_dict = {
             "id": 123,  # should be string
             "instruction": "Do something",
         }
         with pytest.raises(ValidationError):
-            parse_task_yaml(task_dict)
+            parse_action_yaml(task_dict)
 
     def test_parse_task_yaml_wrong_type_for_instruction_raises_validation_error(self):
-        """AC-11: parse_task_yaml raises ValidationError when instruction is wrong type."""
+        """AC-11: parse_action_yaml raises ValidationError when instruction is wrong type."""
         task_dict = {
             "id": "task_6",
             "instruction": ["list", "instead", "of", "string"],  # should be string
         }
         with pytest.raises(ValidationError):
-            parse_task_yaml(task_dict)
+            parse_action_yaml(task_dict)
 
     def test_parse_task_yaml_returns_task_primitive(self):
-        """AC-12: parse_task_yaml returns Task primitive instance."""
+        """AC-12: parse_action_yaml returns Task primitive instance."""
         yaml_content = """
 id: task_7
 instruction: "Test instruction"
 """
-        result = parse_task_yaml(yaml_content)
+        result = parse_action_yaml(yaml_content)
         assert isinstance(result, Action)
         assert hasattr(result, "id")
         assert hasattr(result, "instruction")
         assert hasattr(result, "context")
 
     def test_parse_task_yaml_with_multiline_instruction(self):
-        """AC-13: parse_task_yaml handles multiline instruction text."""
+        """AC-13: parse_action_yaml handles multiline instruction text."""
         yaml_content = """
 id: task_8
 instruction: |
@@ -875,14 +875,14 @@ instruction: |
   Each line provides more detail.
 context: "Some context"
 """
-        task = parse_task_yaml(yaml_content)
+        task = parse_action_yaml(yaml_content)
         assert task.id == "task_8"
         assert "multiline instruction" in task.instruction
         assert "spans multiple lines" in task.instruction
         assert task.context == "Some context"
 
     def test_parse_task_yaml_with_multiline_context(self):
-        """AC-14: parse_task_yaml handles multiline context text."""
+        """AC-14: parse_action_yaml handles multiline context text."""
         yaml_content = """
 id: task_9
 instruction: "Simple instruction"
@@ -891,7 +891,7 @@ context: |
   With multiple paragraphs.
   Providing rich background.
 """
-        task = parse_task_yaml(yaml_content)
+        task = parse_action_yaml(yaml_content)
         assert task.id == "task_9"
         assert "multiline context" in task.context
         assert "multiple paragraphs" in task.context
