@@ -26,6 +26,7 @@ Subcommands:
   init          Initialize .phalanx/ in workspace
   gc            Run garbage collection
   run           Run a workflow with a task
+  server        Start uvicorn server with phalanx.api:app
 """
 
 from __future__ import annotations
@@ -1210,6 +1211,31 @@ def run_cmd(ctx, workflow_file, task_file):
     except Exception as e:
         click.echo(f"Error: {e}", err=True)
         raise SystemExit(1)
+
+
+# ── server ───────────────────────────────────────────────────────────
+
+
+@cli.command("server")
+@click.option(
+    "--host",
+    default="0.0.0.0",
+    show_default=True,
+    help="Host to bind the server to",
+)
+@click.option(
+    "--port",
+    type=int,
+    default=8000,
+    show_default=True,
+    help="Port to bind the server to",
+)
+def server_cmd(host: str, port: int) -> None:
+    """Start uvicorn server with phalanx.api:app."""
+    import uvicorn
+
+    click.echo(f"Starting Phalanx API server at http://{host}:{port}")
+    uvicorn.run("phalanx.api:app", host=host, port=port)
 
 
 # ── mcp-server ───────────────────────────────────────────────────────
