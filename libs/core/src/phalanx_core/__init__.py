@@ -6,7 +6,14 @@ from .primitives import Soul, Task
 from .runner import PhalanxTeamRunner, ExecutionResult
 from .state import WorkflowState
 from .blocks.base import BaseBlock
-from .blocks.implementations import LinearBlock, FanOutBlock, SynthesizeBlock, DebateBlock
+from .blocks.implementations import (
+    LinearBlock,
+    FanOutBlock,
+    SynthesizeBlock,
+    DebateBlock,
+    RouterBlock,
+    AdvisorBlock,
+)
 from .blueprint import Blueprint
 
 __all__ = [
@@ -20,5 +27,7 @@ __all__ = [
     "FanOutBlock",
     "SynthesizeBlock",
     "DebateBlock",
+    "RouterBlock",
+    "AdvisorBlock",
     "Blueprint",
 ]

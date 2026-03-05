@@ -442,3 +442,107 @@ class RetryBlock(BaseBlock):
         else:
             # This should never happen, but satisfy type checker
             raise RuntimeError(f"RetryBlock {self.block_id}: unexpected error state")
+
+
+class AdvisorBlock(BaseBlock):
+    """
+    Analyze failure context from shared_memory and produce recommendations.
+
+    Typical Use: After RetryBlock exhausts retries, analyze errors and recommend fixes.
+    Example: AdvisorBlock reads retry_errors and produces actionable recommendation.
+    """
+
+    def __init__(
+        self,
+        block_id: str,
+        failure_context_keys: List[str],
+        advisor_soul: Soul,
+        runner: PhalanxTeamRunner,
+    ):
+        """
+        Args:
+            block_id: Unique block identifier.
+            failure_context_keys: Keys to read from state.shared_memory for analysis.
+            advisor_soul: Agent that performs failure analysis.
+            runner: Execution engine for running tasks.
+
+        Raises:
+            ValueError: If block_id is empty or failure_context_keys is empty.
+        """
+        super().__init__(block_id)
+        if not failure_context_keys:
+            raise ValueError(f"AdvisorBlock {block_id}: failure_context_keys cannot be empty")
+        self.failure_context_keys = failure_context_keys
+        self.advisor_soul = advisor_soul
+        self.runner = runner
+
+    async def execute(self, state: WorkflowState) -> WorkflowState:
+        """
+        Analyze failure context and produce recommendations.
+
+        Args:
+            state: Must have all failure_context_keys present in shared_memory.
+
+        Returns:
+            New state with:
+            - results[block_id] = recommendation text
+            - shared_memory[f"{block_id}_recommendation"] = recommendation text
+            - messages appended with advisor summary
+
+        Raises:
+            ValueError: If any failure_context_key missing from state.shared_memory.
+        """
+        # Step 1: Validate all context keys exist
+        missing_keys = [key for key in self.failure_context_keys if key not in state.shared_memory]
+        if missing_keys:
+            raise ValueError(
+                f"AdvisorBlock {self.block_id}: missing failure context keys: {missing_keys}. "
+                f"Available keys: {list(state.shared_memory.keys())}"
+            )
+
+        # Step 2: Gather error context
+        error_contexts = []
+        for key in self.failure_context_keys:
+            context_value = state.shared_memory[key]
+            # Handle both list and string values
+            if isinstance(context_value, list):
+                formatted = "\n".join([f"  - {item}" for item in context_value])
+            else:
+                formatted = str(context_value)
+            error_contexts.append(f"Context from '{key}':\n{formatted}")
+
+        combined_context = "\n\n".join(error_contexts)
+
+        # Step 3: Construct analysis task
+        analysis_instruction = f"""You are analyzing a workflow failure. Review the error context below and provide:
+1. Root cause analysis
+2. Recommended remediation steps
+3. Prevention strategies for future runs
+
+Error Context:
+{combined_context}
+
+Provide your analysis and recommendations in a structured format."""
+
+        analysis_task = Task(id=f"{self.block_id}_analysis", instruction=analysis_instruction)
+
+        # Step 4: Execute analysis
+        result = await self.runner.execute_task(analysis_task, self.advisor_soul)
+
+        # Step 5: Return updated state
+        return state.model_copy(
+            update={
+                "results": {**state.results, self.block_id: result.output},
+                "shared_memory": {
+                    **state.shared_memory,
+                    f"{self.block_id}_recommendation": result.output,
+                },
+                "messages": state.messages
+                + [
+                    {
+                        "role": "system",
+                        "content": f"[Block {self.block_id}] AdvisorBlock analyzed {len(self.failure_context_keys)} context(s)",
+                    }
+                ],
+            }
+        )
