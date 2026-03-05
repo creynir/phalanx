@@ -106,8 +106,8 @@ def sample_souls():
             system_prompt="You evaluate consensus and make decisions.",
         ),
         "advisor": Soul(
-            id="advisor",
-            role="Advisor",
+            id="team_lead",
+            role="Team Lead",
             system_prompt="You analyze failures and provide recommendations.",
         ),
     }

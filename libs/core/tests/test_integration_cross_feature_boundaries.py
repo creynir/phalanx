@@ -90,7 +90,7 @@ def test_souls():
     """Standard test souls for all integration tests."""
     return {
         "advisor": Soul(
-            id="advisor", role="Error Advisor", system_prompt="Analyze errors and recommend fixes."
+            id="team_lead", role="Team Lead", system_prompt="Analyze errors and recommend fixes."
         ),
         "agent1": Soul(id="agent1", role="Agent 1", system_prompt="Provide input on topics."),
         "agent2": Soul(id="agent2", role="Agent 2", system_prompt="Provide input on topics."),
@@ -119,9 +119,9 @@ async def test_shared_memory_key_format_compatibility(mock_runner, test_souls):
         # MessageBus calls (2 agents × 1 iteration = 2)
         ExecutionResult(task_id="t1", soul_id="agent1", output="Opinion A"),
         ExecutionResult(task_id="t2", soul_id="agent2", output="Opinion B"),
-        # Advisor call (1)
+        # TeamLeadBlock call (1)
         ExecutionResult(
-            task_id="adv", soul_id="advisor", output="Recommendation: Retry with backoff"
+            task_id="adv", soul_id="team_lead", output="Recommendation: Retry with backoff"
         ),
     ]
 
@@ -239,7 +239,7 @@ async def test_retry_advisor_shared_memory_flow(mock_runner, test_souls):
     retry_block = RetryBlock("retry_api", flaky_block, max_retries=3, provide_error_context=True)
 
     mock_runner.execute_task.return_value = ExecutionResult(
-        task_id="adv", soul_id="advisor", output="Root cause: Transient failure. Retry succeeded."
+        task_id="adv", soul_id="team_lead", output="Root cause: Transient failure. Retry succeeded."
     )
 
     advisor = TeamLeadBlock(
@@ -267,11 +267,11 @@ async def test_retry_advisor_shared_memory_flow(mock_runner, test_souls):
     # Phase 2: TeamLeadBlock analyzes errors
     state = await advisor.execute(state)
 
-    # Verify advisor accessed retry_errors
+    # Verify TeamLeadBlock accessed retry_errors
     assert "advisor_api" in state.results
     assert "Root cause" in state.results["advisor_api"]
 
-    # Verify advisor was called with formatted error context
+    # Verify TeamLeadBlock was called with formatted error context
     call_args = mock_runner.execute_task.call_args
     task_arg = call_args[0][0]
     assert "retry_api_retry_errors" in task_arg.instruction
@@ -358,7 +358,7 @@ async def test_four_block_error_recovery_workflow(mock_runner, test_souls):
             return ExecutionResult(
                 task_id=task.id, soul_id=soul.id, output=f"Input {call_count[0]}"
             )
-        else:  # Advisor call
+        else:  # TeamLeadBlock call
             return ExecutionResult(
                 task_id=task.id,
                 soul_id=soul.id,
@@ -422,7 +422,7 @@ async def test_four_block_error_recovery_workflow(mock_runner, test_souls):
     # Verify complete workflow state
     assert "consensus" in state.results  # MessageBus output
     assert "decision" in state.results  # Router output
-    assert "recovery" in state.results  # Advisor output
+    assert "recovery" in state.results  # TeamLeadBlock output
     assert "Alternative approach" in state.results["recovery"]
 
     # Verify all shared_memory keys present
