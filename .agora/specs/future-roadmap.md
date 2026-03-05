@@ -53,12 +53,33 @@
 
 ---
 
-## Phase 2.0: Advanced Control & Memory
-- **Auto-Learning Memory:** Vector DB storage of successful error-recovery trajectories (when the system heals itself, it remembers the solution).
-- **Cost & Budget Limits:** Execution constraints tied to specific Workflows to prevent runaway loops.
+## Phase 1.7: Advanced UI Features (Deferred from 1.6)
+- **Visual Debugger:** Step-through execution and visual inspection of state at each node.
+- **Real-Time Collaboration:** Multiplayer canvas for team workflow design.
+- **Template Marketplace:** Built-in sharing of Souls, Tasks, and Workflows.
+- **AI-Assisted Prompting:** Context-aware prompt suggestions inside the Monaco editor.
+
+---
+
+## Phase 1.8: Advanced Orchestration & Reliability
+- **Checkpoint & Resume:** Fine-grained step-level checkpointing so that resumed agents skip completely executed tasks safely.
+- **Auto-Restart Engine:** Automatic recovery and escalation for infrastructure failures like `connection_lost` or ghost sessions (`process_exited`).
+- **Debt Tracking:** Typed `DebtRecord`s that agents can flag (e.g. `accept-with-debt`) and the Engineering Manager can review in subsequent runs.
+- **Consensus Validation:** Ensure continuous responsiveness from agents after success artifacts, with Team Lead feed-based consensus before completion.
+
+---
+
+## Phase 1.9: Context Injection & Cost Management
+- **Continual Learning (Context Store):** Extract context from completed artifacts, deduplicate, and inject them into subsequent agent prompts (budgeted by tokens) to prevent drift.
+- **Cost & Budget Limits:** Execution constraints tied to specific Workflows to prevent runaway loops (e.g., hard cap at $5.00 per run).
+
+---
+
+## Phase 2.0: Deep Autonomy (Auto-Healing)
+- **Auto-Learning Memory:** Vector DB storage of successful error-recovery trajectories (when the system heals itself, it remembers the solution and injects it deterministically).
 
 ---
 
 ## Phase 3.0: Advanced Optimizations
-- **Backend Hot-Swapping:** The ability to dynamically change an agent's underlying backend (e.g., from Cursor to Claude Code to a LiteLLM proxy) mid-task.
+- **Backend Hot-Swapping:** The ability to dynamically change an agent's underlying backend (e.g., from Cursor to Claude Code to a proxy) mid-task.
 - **Context Serialization (Enhanced Prompt-Replay):** To support hot-swapping without losing the agent's "chain of thought", the `CheckpointManager` will generate a structured `context_summary`. When swapped to a new backend, the new agent will receive this summary + completed DAG artifacts + remaining tasks.
