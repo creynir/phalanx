@@ -445,26 +445,26 @@ class RetryBlock(BaseBlock):
             raise RuntimeError(f"RetryBlock {self.block_id}: unexpected error state")
 
 
-class AdvisorBlock(BaseBlock):
+class TeamLeadBlock(BaseBlock):
     """
     Analyze failure context from shared_memory and produce recommendations.
 
     Typical Use: After RetryBlock exhausts retries, analyze errors and recommend fixes.
-    Example: AdvisorBlock reads retry_errors and produces actionable recommendation.
+    Example: TeamLeadBlock reads retry_errors and produces actionable recommendation.
     """
 
     def __init__(
         self,
         block_id: str,
         failure_context_keys: List[str],
-        advisor_soul: Soul,
+        team_lead_soul: Soul,
         runner: PhalanxTeamRunner,
     ):
         """
         Args:
             block_id: Unique block identifier.
             failure_context_keys: Keys to read from state.shared_memory for analysis.
-            advisor_soul: Agent that performs failure analysis.
+            team_lead_soul: Agent that performs failure analysis.
             runner: Execution engine for running tasks.
 
         Raises:
@@ -472,9 +472,9 @@ class AdvisorBlock(BaseBlock):
         """
         super().__init__(block_id)
         if not failure_context_keys:
-            raise ValueError(f"AdvisorBlock {block_id}: failure_context_keys cannot be empty")
+            raise ValueError(f"TeamLeadBlock {block_id}: failure_context_keys cannot be empty")
         self.failure_context_keys = failure_context_keys
-        self.advisor_soul = advisor_soul
+        self.team_lead_soul = team_lead_soul
         self.runner = runner
 
     async def execute(self, state: WorkflowState) -> WorkflowState:
@@ -497,7 +497,7 @@ class AdvisorBlock(BaseBlock):
         missing_keys = [key for key in self.failure_context_keys if key not in state.shared_memory]
         if missing_keys:
             raise ValueError(
-                f"AdvisorBlock {self.block_id}: missing failure context keys: {missing_keys}. "
+                f"TeamLeadBlock {self.block_id}: missing failure context keys: {missing_keys}. "
                 f"Available keys: {list(state.shared_memory.keys())}"
             )
 
@@ -528,7 +528,7 @@ Provide your analysis and recommendations in a structured format."""
         analysis_task = Task(id=f"{self.block_id}_analysis", instruction=analysis_instruction)
 
         # Step 4: Execute analysis
-        result = await self.runner.execute_task(analysis_task, self.advisor_soul)
+        result = await self.runner.execute_task(analysis_task, self.team_lead_soul)
 
         # Step 5: Return updated state
         return state.model_copy(
@@ -542,38 +542,38 @@ Provide your analysis and recommendations in a structured format."""
                 + [
                     {
                         "role": "system",
-                        "content": f"[Block {self.block_id}] AdvisorBlock analyzed {len(self.failure_context_keys)} context(s)",
+                        "content": f"[Block {self.block_id}] TeamLeadBlock analyzed {len(self.failure_context_keys)} context(s)",
                     }
                 ],
             }
         )
 
 
-class ReplannerBlock(BaseBlock):
+class EngineeringManagerBlock(BaseBlock):
     """
     Generate alternative execution plan using LLM, parse into structured steps.
 
     Typical Use: After workflow failure, generate new plan with structured steps.
-    Example: ReplannerBlock reads current task and failure context, produces plan + JSON steps.
+    Example: EngineeringManagerBlock reads current task and failure context, produces plan + JSON steps.
     """
 
     def __init__(
         self,
         block_id: str,
-        planner_soul: Soul,
+        engineering_manager_soul: Soul,
         runner: PhalanxTeamRunner,
     ):
         """
         Args:
             block_id: Unique block identifier.
-            planner_soul: Agent that generates execution plans.
+            engineering_manager_soul: Agent that generates execution plans.
             runner: Execution engine for running tasks.
 
         Raises:
             ValueError: If block_id is empty (from BaseBlock).
         """
         super().__init__(block_id)
-        self.planner_soul = planner_soul
+        self.engineering_manager_soul = engineering_manager_soul
         self.runner = runner
 
     async def execute(self, state: WorkflowState) -> WorkflowState:
@@ -594,7 +594,7 @@ class ReplannerBlock(BaseBlock):
         """
         # Step 1: Validate current_task
         if state.current_task is None:
-            raise ValueError(f"ReplannerBlock {self.block_id}: state.current_task is None")
+            raise ValueError(f"EngineeringManagerBlock {self.block_id}: state.current_task is None")
 
         # Step 2: Gather context (current task + any failure info in shared_memory)
         context_parts = [f"Original Goal: {state.current_task.instruction}"]
@@ -625,7 +625,7 @@ Your plan:"""
         planning_task = Task(id=f"{self.block_id}_planning", instruction=planning_instruction)
 
         # Step 4: Execute planning task
-        result = await self.runner.execute_task(planning_task, self.planner_soul)
+        result = await self.runner.execute_task(planning_task, self.engineering_manager_soul)
         text_plan = result.output
 
         # Step 5: Parse plan to extract structured steps
@@ -662,7 +662,7 @@ Your plan:"""
                 + [
                     {
                         "role": "system",
-                        "content": f"[Block {self.block_id}] ReplannerBlock generated {len(structured_steps)} step(s)",
+                        "content": f"[Block {self.block_id}] EngineeringManagerBlock generated {len(structured_steps)} step(s)",
                     }
                 ],
             }
