@@ -5,7 +5,7 @@ Concrete block implementations for workflow composition.
 import asyncio
 import json
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Union
 
 from phalanx_core.blocks.base import BaseBlock
 from phalanx_core.state import WorkflowState
@@ -781,6 +781,95 @@ class MessageBusBlock(BaseBlock):
                     {
                         "role": "system",
                         "content": f"[Block {self.block_id}] MessageBus completed: {len(self.souls)} agents × {self.iterations} rounds",
+                    }
+                ],
+            }
+        )
+
+
+class RouterBlock(BaseBlock):
+    """
+    Evaluate routing condition using Soul (LLM) or Callable (function).
+
+    Supports two evaluation modes:
+    1. Soul evaluator: LLM decides based on current_task
+    2. Callable evaluator: Function evaluates state programmatically
+
+    Typical Use: Decision points in workflows (approve/reject, route selection).
+    Output: Decision string stored in results and metadata.
+    """
+
+    def __init__(
+        self,
+        block_id: str,
+        condition_evaluator: Union[Soul, Callable[[WorkflowState], str]],
+        runner: Optional[PhalanxTeamRunner] = None,
+    ) -> None:
+        """
+        Args:
+            block_id: Unique block identifier.
+            condition_evaluator: Either a Soul (LLM evaluates) or Callable (function evaluates).
+            runner: Required if condition_evaluator is Soul, optional otherwise.
+
+        Raises:
+            ValueError: If block_id is empty (from BaseBlock).
+            ValueError: If condition_evaluator is Soul but runner is None.
+        """
+        super().__init__(block_id)
+
+        # Validation: runner required for Soul evaluator
+        if isinstance(condition_evaluator, Soul) and runner is None:
+            raise ValueError(
+                f"RouterBlock {block_id}: runner is required when condition_evaluator is Soul"
+            )
+
+        self.condition_evaluator = condition_evaluator
+        self.runner = runner
+
+    async def execute(self, state: WorkflowState) -> WorkflowState:
+        """
+        Evaluate routing condition and store decision.
+
+        Args:
+            state: If condition_evaluator is Soul, must have state.current_task set.
+
+        Returns:
+            New state with:
+            - results[block_id] = decision string (e.g., "approved", "rejected")
+            - metadata[f"{block_id}_decision"] = decision string
+            - messages appended with routing decision summary
+
+        Raises:
+            ValueError: If condition_evaluator is Soul but current_task is None.
+        """
+        # Step 1: Evaluate condition based on type
+        if isinstance(self.condition_evaluator, Soul):
+            # Soul-based evaluation (LLM decides)
+            if state.current_task is None:
+                raise ValueError(
+                    f"RouterBlock {self.block_id}: state.current_task is None (required for Soul evaluator)"
+                )
+
+            # Execute routing task with Soul
+            result = await self.runner.execute_task(state.current_task, self.condition_evaluator)
+            decision = result.output.strip()
+        else:
+            # Callable-based evaluation (function decides)
+            decision = self.condition_evaluator(state)
+
+        # Step 2: Return updated state with decision
+        return state.model_copy(
+            update={
+                "results": {**state.results, self.block_id: decision},
+                "metadata": {
+                    **state.metadata,
+                    f"{self.block_id}_decision": decision,
+                },
+                "messages": state.messages
+                + [
+                    {
+                        "role": "system",
+                        "content": f"[Block {self.block_id}] RouterBlock decision: {decision}",
                     }
                 ],
             }
