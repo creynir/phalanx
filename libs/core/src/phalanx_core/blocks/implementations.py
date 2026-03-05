@@ -4,7 +4,7 @@ Concrete block implementations for workflow composition.
 
 import asyncio
 import json
-from typing import Dict, List
+from typing import Any, Dict, List
 
 from phalanx_core.blocks.base import BaseBlock
 from phalanx_core.state import WorkflowState
@@ -315,6 +315,124 @@ class DebateBlock(BaseBlock):
                     {
                         "role": "system",
                         "content": f"[Block {self.block_id}] Debate completed: {self.iterations} rounds",
+                    }
+                ],
+            }
+        )
+
+
+class MessageBusBlock(BaseBlock):
+    """
+    Orchestrate N-agent round-robin message exchange with structured transcript output.
+
+    Typical Use: Multi-agent brainstorming with context passing between agents.
+    Example: 4 agents collaborate for 3 rounds, each agent sees prior contributions in their round.
+    Output Format: JSON transcript with rounds and contributions, consensus in shared_memory.
+    """
+
+    def __init__(
+        self,
+        block_id: str,
+        souls: List[Soul],
+        iterations: int,
+        runner: PhalanxTeamRunner,
+    ):
+        """
+        Args:
+            block_id: Unique block identifier.
+            souls: List of agents participating in message exchange (must be non-empty).
+            iterations: Number of rounds to execute (must be >= 1).
+            runner: Execution engine for running tasks.
+
+        Raises:
+            ValueError: If block_id is empty (from BaseBlock).
+            ValueError: If souls list is empty.
+            ValueError: If iterations < 1.
+        """
+        super().__init__(block_id)
+        if not souls:
+            raise ValueError(f"MessageBusBlock {block_id}: souls list cannot be empty")
+        if iterations < 1:
+            raise ValueError(
+                f"MessageBusBlock {block_id}: iterations must be >= 1, got {iterations}"
+            )
+        self.souls = souls
+        self.iterations = iterations
+        self.runner = runner
+
+    async def execute(self, state: WorkflowState) -> WorkflowState:
+        """
+        Execute N-agent round-robin message exchange.
+
+        Args:
+            state: Must have state.current_task set (the discussion topic).
+
+        Returns:
+            New state with:
+            - results[block_id] = JSON transcript: [{"round": int, "contributions": [{"soul_id": str, "output": str}]}]
+            - shared_memory[f"{block_id}_consensus"] = final agent output from last round
+            - messages appended with message bus summary
+
+        Raises:
+            ValueError: If state.current_task is None.
+        """
+        # Step 1: Validate current_task
+        if state.current_task is None:
+            raise ValueError(f"MessageBusBlock {self.block_id}: state.current_task is None")
+
+        # Step 2: Initialize transcript
+        transcript: List[Dict[str, Any]] = []
+
+        # Step 3: Execute iterations
+        for round_num in range(1, self.iterations + 1):
+            round_contributions: List[Dict[str, str]] = []
+
+            # Step 4: Sequential contributions within round
+            for soul in self.souls:
+                # Context passing mechanism
+                # Construct task by appending formatted contributions to current_task.instruction
+                if round_contributions:
+                    # Format prior contributions in THIS round
+                    formatted_context = "\n\n".join(
+                        [f"[{c['soul_id']}]: {c['output']}" for c in round_contributions]
+                    )
+                    context_str = f"Prior contributions in this round:\n{formatted_context}"
+                else:
+                    context_str = None
+
+                # Create task with context
+                task = Task(
+                    id=f"{self.block_id}_r{round_num}_{soul.id}",
+                    instruction=state.current_task.instruction,
+                    context=context_str,
+                )
+
+                # Execute task
+                result = await self.runner.execute_task(task, soul)
+
+                # Record contribution
+                round_contributions.append({"soul_id": soul.id, "output": result.output})
+
+            # Step 5: Append round to transcript
+            transcript.append({"round": round_num, "contributions": round_contributions})
+
+        # Step 6: Extract consensus (last agent's output in last round)
+        # Note: "consensus" refers to the last agent's output, not necessarily true consensus
+        final_output = transcript[-1]["contributions"][-1]["output"]
+
+        # Step 7: Return updated state
+        return state.model_copy(
+            update={
+                "results": {**state.results, self.block_id: json.dumps(transcript, indent=2)},
+                "shared_memory": {
+                    **state.shared_memory,
+                    f"{self.block_id}_consensus": final_output,
+                },
+                "messages": state.messages
+                + [
+                    {
+                        "role": "system",
+                        "content": f"[Block {self.block_id}] MessageBus completed: {len(self.souls)} agents × {self.iterations} rounds",
                     }
                 ],
             }
