@@ -276,10 +276,10 @@ async def test_retry_advisor_with_workflow_orchestration(mock_runner, team_lead_
     )
 
     # Create workflow for normal success path
-    bp = Workflow("api_workflow")
-    bp.add_block(retry_block)
-    bp.add_transition("retry_api", None)
-    bp.set_entry("retry_api")
+    wf = Workflow("api_workflow")
+    wf.add_block(retry_block)
+    wf.add_transition("retry_api", None)
+    wf.set_entry("retry_api")
 
     # Execute workflow with error handling
     task = Task(id="api_task", instruction="Call external API")
@@ -287,7 +287,7 @@ async def test_retry_advisor_with_workflow_orchestration(mock_runner, team_lead_
 
     # Try normal path
     try:
-        await bp.run(state)
+        await wf.run(state)
         # If we get here, retry succeeded - no advisor needed
         assert False, "Expected retry to fail"
     except RuntimeError:
@@ -512,7 +512,7 @@ async def test_messagebus_router_workflow(mock_runner, sample_souls):
     mock_runner.execute_task.side_effect = create_messagebus_result
 
     # Build Workflow with MessageBusBlock → RouterBlock
-    bp = Workflow("messagebus_router_workflow")
+    wf = Workflow("messagebus_router_workflow")
 
     # Create MessageBusBlock with 2 souls, 2 iterations
     messagebus_block = MessageBusBlock(
@@ -535,19 +535,19 @@ async def test_messagebus_router_workflow(mock_runner, sample_souls):
     router_block = RouterBlock("router1", evaluate_consensus, runner=None)
 
     # Add blocks to workflow
-    bp.add_block(messagebus_block).add_block(router_block)
-    bp.add_transition("messagebus1", "router1").add_transition("router1", None)
-    bp.set_entry("messagebus1")
+    wf.add_block(messagebus_block).add_block(router_block)
+    wf.add_transition("messagebus1", "router1").add_transition("router1", None)
+    wf.set_entry("messagebus1")
 
     # Validate workflow
-    errors = bp.validate()
+    errors = wf.validate()
     assert errors == [], f"Workflow validation failed: {errors}"
 
     # Execute workflow
     initial_state = WorkflowState(
         current_task=Task(id="discussion", instruction="Discuss the proposal")
     )
-    final_state = await bp.run(initial_state)
+    final_state = await wf.run(initial_state)
 
     # Verify MessageBusBlock executed and stored transcript
     assert "messagebus1" in final_state.results
@@ -609,10 +609,10 @@ async def test_retry_advisor_recovery_workflow(mock_runner, sample_souls):
     )
 
     # Build Workflow: RetryBlock → TeamLeadBlock
-    bp = Workflow("retry_advisor_workflow")
-    bp.add_block(retry_block).add_block(advisor_block)
-    bp.add_transition("retry1", "advisor1").add_transition("advisor1", None)
-    bp.set_entry("retry1")
+    wf = Workflow("retry_advisor_workflow")
+    wf.add_block(retry_block).add_block(advisor_block)
+    wf.add_transition("retry1", "advisor1").add_transition("advisor1", None)
+    wf.set_entry("retry1")
 
     # Execute workflow - RetryBlock will fail and raise exception
     initial_state = WorkflowState(
@@ -622,7 +622,7 @@ async def test_retry_advisor_recovery_workflow(mock_runner, sample_souls):
     # Since RetryBlock raises after exhausting retries, we need to handle it
     # In a real workflow, you'd want error handling, but for this test we verify the state before the raise
     try:
-        await bp.run(initial_state)
+        await wf.run(initial_state)
         assert False, "RetryBlock should have raised RuntimeError"
     except RuntimeError as e:
         assert "Mock failure" in str(e)
@@ -646,13 +646,13 @@ async def test_retry_advisor_recovery_workflow(mock_runner, sample_souls):
     )
 
     # Build Workflow: RetryBlock → TeamLeadBlock
-    bp2 = Workflow("retry_advisor_recovery_workflow")
-    bp2.add_block(retry_block_recovering).add_block(advisor_block2)
-    bp2.add_transition("retry2", "advisor2").add_transition("advisor2", None)
-    bp2.set_entry("retry2")
+    wf2 = Workflow("retry_advisor_recovery_workflow")
+    wf2.add_block(retry_block_recovering).add_block(advisor_block2)
+    wf2.add_transition("retry2", "advisor2").add_transition("advisor2", None)
+    wf2.set_entry("retry2")
 
     # Execute workflow
-    final_state = await bp2.run(initial_state)
+    final_state = await wf2.run(initial_state)
 
     # Verify RetryBlock succeeded after retries
     assert "retry2" in final_state.results
@@ -710,7 +710,7 @@ async def test_messagebus_router_with_soul_evaluator(mock_runner, sample_souls):
     mock_runner.execute_task.side_effect = create_result
 
     # Build Workflow
-    bp = Workflow("messagebus_router_soul_workflow")
+    wf = Workflow("messagebus_router_soul_workflow")
 
     messagebus_block = MessageBusBlock(
         "messagebus2",
@@ -722,15 +722,15 @@ async def test_messagebus_router_with_soul_evaluator(mock_runner, sample_souls):
     # RouterBlock with Soul evaluator (uses LLM to decide)
     router_block = RouterBlock("router2", sample_souls["router_judge"], runner=mock_runner)
 
-    bp.add_block(messagebus_block).add_block(router_block)
-    bp.add_transition("messagebus2", "router2").add_transition("router2", None)
-    bp.set_entry("messagebus2")
+    wf.add_block(messagebus_block).add_block(router_block)
+    wf.add_transition("messagebus2", "router2").add_transition("router2", None)
+    wf.set_entry("messagebus2")
 
     # Execute
     initial_state = WorkflowState(
         current_task=Task(id="discussion2", instruction="Evaluate the discussion consensus")
     )
-    final_state = await bp.run(initial_state)
+    final_state = await wf.run(initial_state)
 
     # Verify MessageBusBlock executed
     assert "messagebus2" in final_state.results
