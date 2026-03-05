@@ -1159,6 +1159,24 @@ def gc_cmd(ctx, older_than, gc_all):
             click.echo("No teams to clean up")
 
 
+# ── mcp-server ───────────────────────────────────────────────────────
+
+
+@cli.command("mcp-server")
+@click.option(
+    "--workflows-dir",
+    envvar="PHALANX_WORKFLOWS_DIR",
+    default="./workflows",
+    show_default=True,
+    help="Directory containing workflow YAML files to expose as MCP tools.",
+)
+def mcp_server_cmd(workflows_dir: str) -> None:
+    """Start the Phalanx MCP server (stdio transport) for Cursor/Claude Desktop."""
+    from phalanx.mcp_server import run_mcp_server
+
+    run_mcp_server(workflows_dir=workflows_dir)
+
+
 def _parse_duration(s: str) -> int:
     """Parse duration string like '24h', '7d', '30m' into hours."""
     s = s.strip().lower()
