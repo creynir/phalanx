@@ -99,18 +99,25 @@ Phase 1.4 exposes the Phalanx execution engine to the outside world through thre
 
 ---
 
-### ADR-6: FastAPI as API Layer, MCP as Separate Server
+### ADR-7: Safe Dynamic Creation via MCP (Security Boundary)
 
 **Status:** Accepted  
-**Context:** FastAPI serves REST/HTTP; MCP uses stdio or HTTP with a different protocol (JSON-RPC style).  
+**Context:** We want external AIs (like Cursor) to use Phalanx. If we expose an MCP tool `phalanx_create_block` that accepts raw Python code, a hallucinating AI could inject malware/arbitrary code into the local machine.  
 **Decision:**  
-- **FastAPI:** Primary HTTP API for listing workflows, running workflows, health checks. Can run standalone or alongside MCP.  
-- **MCP Server:** Separate process or embedded within the FastAPI app (same process, different transport). MCP Python SDK (`mcp` package) used for server implementation.  
-**Consequences:**  
-- Clean separation of concerns; MCP clients (Cursor, Claude) connect via their native MCP transport.  
-- Deployment: Single binary/container can run both FastAPI and MCP server.
+- **Read & Run (Safe):** We expose tools to list and run existing workflows (`phalanx_run_workflow`).
+- **Create YAML (Moderate):** We expose a tool to create new Souls or Workflows *as YAML files* in the `custom/` directory (`phalanx_create_soul`, `phalanx_create_workflow`). This is safe because the YAML parser is sandboxed and declarative.
+- **Create Python Blocks (Dangerous):** We will **NOT** expose an MCP tool for external AIs to write raw Python `BaseBlock` code dynamically in this phase. Code generation must remain an explicit developer action until we build a sandboxed execution environment (Phase 2).
 
 ---
+
+### ADR-8: Dual Server Exposure (FastAPI vs MCP Cost/Value)
+
+**Status:** Accepted  
+**Context:** Building both a REST API and an MCP Server simultaneously increases complexity and LLM token cost during development.  
+**Decision:** We will decouple the deployment. `phalanx_core` will expose a generic `Server` module. 
+- **Phase 1.4 priority:** MCP Server. This provides immediate, massive dogfooding value (using Claude Desktop to run Phalanx workflows). It does not require a web frontend.
+- **Phase 1.5 priority:** FastAPI. We will build the FastAPI REST wrappers *when* we start building the Next.js visual GUI in Phase 1.5. 
+**Consequences:** Lowers the immediate implementation cost of 1.4 while maximizing utility for the CLI/AI-agent users.
 
 ## 3. Component Design
 
@@ -254,6 +261,8 @@ Predefined souls for common roles:
 | `researcher` | researcher_1 | Senior Researcher |
 | `reviewer` | reviewer_1 | Peer Reviewer |
 | `engineering_manager` | manager_1 | Engineering Manager |
+| `coder` | coder_1 | Software Engineer |
+| `architect` | architect_1 | Systems Architect |
 | `synthesizer` | synthesizer_1 | Synthesis Agent |
 | `generalist` | generalist_1 | General-purpose Assistant |
 
@@ -267,12 +276,14 @@ Users override by defining the same key in `souls:` section. Soul files (`.md`) 
 
 ```
 workspace/
-├── workflows/
-│   └── research_review.yaml
 ├── custom/
-│   ├── my_blocks.py      # Defines MyCustomBlock, AnotherBlock
-│   └── vendor/
-│       └── vendor_block.py
+│   ├── blocks/
+│   │   ├── my_blocks.py      # Defines MyCustomBlock, AnotherBlock
+│   │   └── vendor_block.py
+│   ├── souls/
+│   │   └── specialized_coder.yaml # Custom soul definitions
+│   └── workflows/
+│       └── research_review.yaml  # Auto-discovered workflows
 └── phalanx.yaml          # Optional: config, custom_dir path
 ```
 
@@ -283,21 +294,21 @@ workspace/
 #### 3.2.2 Discovery Algorithm
 
 ```
-Algorithm: discover_custom_blocks(custom_dir) → BlockRegistry
+Algorithm: discover_custom_assets(custom_dir) → (BlockRegistry, Dict[str, Soul], Dict[str, Workflow])
 ──────────────────────────────────────────────────────────
 1. registry = BlockRegistry()
-2. Register built-in blocks: registry.register("linear", ...), etc.
-3. For each .py file in custom_dir (recursive):
-   a. module_name = path_to_module(file_path)
-   b. module = importlib.import_module(module_name)
-   c. For each attr in dir(module):
-        if isinstance(getattr(module, attr), type):
-            cls = getattr(module, attr)
-            if issubclass(cls, BaseBlock) and cls is not BaseBlock:
-                block_id = getattr(cls, "block_id", None) or to_snake_case(cls.__name__)
-                factory = lambda sid, desc, _cls=cls: _cls(sid, desc)  # Or from config
-                registry.register(block_id, factory)
-4. RETURN registry
+2. souls_map = load_built_in_souls()
+3. workflows_map = {}
+4. Blocks: For each .py file in custom_dir/blocks/ (recursive):
+   a. Import module, find BaseBlock subclasses
+   b. registry.register(block_id, factory)
+5. Souls: For each .yaml/.md file in custom_dir/souls/:
+   a. Parse YAML, validate into Soul primitive
+   b. souls_map[soul.id] = soul
+6. Workflows: For each .yaml file in custom_dir/workflows/:
+   a. Parse using workflow parser, injecting registry and souls_map
+   b. workflows_map[workflow.name] = workflow
+7. RETURN (registry, souls_map, workflows_map)
 ```
 
 #### 3.2.3 BlockRegistry Factory Signature
