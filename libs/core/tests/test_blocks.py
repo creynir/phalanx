@@ -244,3 +244,21 @@ async def test_debate_block_invalid_iterations(mock_runner):
 
     with pytest.raises(ValueError, match="iterations must be >= 1"):
         DebateBlock("debate1", soul_a, soul_b, iterations=0, runner=mock_runner)
+
+
+@pytest.mark.asyncio
+async def test_linear_block_aggregates_cost_and_tokens(mock_runner, sample_soul):
+    """LinearBlock aggregates cost_usd and total_tokens in returned state."""
+    mock_runner.execute_task.return_value = ExecutionResult(
+        task_id="t1", soul_id="test_soul", output="Test output", cost_usd=0.25, total_tokens=500
+    )
+
+    block = LinearBlock("linear1", sample_soul, mock_runner)
+    task = Task(id="t1", instruction="Test task")
+    state = WorkflowState(current_task=task, total_cost_usd=0.1, total_tokens=100)
+
+    result_state = await block.execute(state)
+
+    # Verify cost and token aggregation
+    assert result_state.total_cost_usd == 0.35  # 0.1 + 0.25
+    assert result_state.total_tokens == 600  # 100 + 500

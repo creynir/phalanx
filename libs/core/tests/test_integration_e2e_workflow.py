@@ -23,7 +23,11 @@ async def test_e2e_single_block_workflow(mock_achat):
     Flow: Task -> WorkflowState -> LinearBlock -> Runner -> LLM -> ExecutionResult -> Updated State
     """
     # Setup
-    mock_achat.return_value = "Research complete: Found 5 relevant papers on quantum computing."
+    mock_achat.return_value = {
+        "content": "Research complete: Found 5 relevant papers on quantum computing.",
+        "cost_usd": 0.1,
+        "total_tokens": 150,
+    }
 
     soul = Soul(
         id="researcher",
@@ -61,6 +65,10 @@ async def test_e2e_single_block_workflow(mock_achat):
     # Verify metadata preserved
     assert final_state.metadata["workflow_name"] == "research_pipeline"
 
+    # Verify cost and token aggregation
+    assert final_state.total_cost_usd == 0.1
+    assert final_state.total_tokens == 150
+
     # Verify LLM was called with correct parameters
     call_kwargs = mock_achat.call_args.kwargs
     assert "quantum computing" in call_kwargs["messages"][0]["content"]
@@ -87,9 +95,21 @@ async def test_e2e_sequential_block_workflow(mock_achat):
 
     # Mock LLM responses for each step
     mock_achat.side_effect = [
-        "Research findings: Topic X has 3 main aspects.",
-        "Analysis: Aspect 1 is most important with 67% impact.",
-        "Summary: Topic X is dominated by Aspect 1, which accounts for the majority of observed effects.",
+        {
+            "content": "Research findings: Topic X has 3 main aspects.",
+            "cost_usd": 0.05,
+            "total_tokens": 100,
+        },
+        {
+            "content": "Analysis: Aspect 1 is most important with 67% impact.",
+            "cost_usd": 0.06,
+            "total_tokens": 120,
+        },
+        {
+            "content": "Summary: Topic X is dominated by Aspect 1, which accounts for the majority of observed effects.",
+            "cost_usd": 0.07,
+            "total_tokens": 140,
+        },
     ]
 
     runner = PhalanxTeamRunner(model_name="gpt-4o")
@@ -133,6 +153,10 @@ async def test_e2e_sequential_block_workflow(mock_achat):
     # Verify metadata preserved throughout
     assert state.metadata["pipeline"] == "analysis_pipeline"
 
+    # Verify cost and token aggregation across all blocks
+    assert state.total_cost_usd == 0.18  # 0.05 + 0.06 + 0.07
+    assert state.total_tokens == 360  # 100 + 120 + 140
+
 
 @pytest.mark.asyncio
 @patch("phalanx_core.runner.LiteLLMClient.achat")
@@ -142,7 +166,10 @@ async def test_e2e_shared_memory_across_blocks(mock_achat):
 
     Tests that blocks can read/write to shared_memory for inter-block communication.
     """
-    mock_achat.side_effect = ["Result 1", "Result 2"]
+    mock_achat.side_effect = [
+        {"content": "Result 1", "cost_usd": 0.1, "total_tokens": 100},
+        {"content": "Result 2", "cost_usd": 0.12, "total_tokens": 120},
+    ]
 
     soul = Soul(id="worker", role="Worker", system_prompt="Process tasks.")
     runner = PhalanxTeamRunner(model_name="gpt-4o")
@@ -206,7 +233,10 @@ async def test_e2e_state_isolation_between_workflows(mock_achat):
 
     Tests that running two separate workflows maintains state isolation.
     """
-    mock_achat.side_effect = ["Workflow 1 result", "Workflow 2 result"]
+    mock_achat.side_effect = [
+        {"content": "Workflow 1 result", "cost_usd": 0.1, "total_tokens": 100},
+        {"content": "Workflow 2 result", "cost_usd": 0.1, "total_tokens": 100},
+    ]
 
     soul = Soul(id="worker", role="Worker", system_prompt="Work.")
     runner = PhalanxTeamRunner(model_name="gpt-4o")
@@ -245,7 +275,11 @@ async def test_e2e_long_running_workflow_state_size(mock_achat):
     """
     # Each block produces 500 char output
     long_output = "L" * 500
-    mock_achat.return_value = long_output
+    mock_achat.return_value = {
+        "content": long_output,
+        "cost_usd": 0.1,
+        "total_tokens": 500,
+    }
 
     soul = Soul(id="verbose", role="Verbose Agent", system_prompt="Generate long outputs.")
     runner = PhalanxTeamRunner(model_name="gpt-4o")
@@ -284,7 +318,11 @@ async def test_e2e_workflow_with_task_context_utilization(mock_achat):
     Tests that context information is properly utilized throughout the execution chain.
     """
     # Mock LLM to echo back the context (simulating context usage)
-    mock_achat.return_value = "Processed request with background information about Q4 metrics."
+    mock_achat.return_value = {
+        "content": "Processed request with background information about Q4 metrics.",
+        "cost_usd": 0.1,
+        "total_tokens": 150,
+    }
 
     soul = Soul(
         id="processor", role="Data Processor", system_prompt="Process data using provided context."

@@ -53,10 +53,14 @@ async def test_task_context_integration_with_runner(
     Tests that runner._build_prompt() correctly appends context to instruction
     and the combined prompt reaches the LLM client.
     """
-    mock_achat.return_value = "Analysis complete"
+    mock_achat.return_value = {
+        "content": "Analysis complete",
+        "cost_usd": 0.1,
+        "total_tokens": 100,
+    }
 
     runner = PhalanxTeamRunner(model_name="test-model")
-    result = await runner.execute_task(integration_task_with_context, integration_soul)
+    await runner.execute_task(integration_task_with_context, integration_soul)
 
     # Verify the prompt construction included context
     call_kwargs = mock_achat.call_args.kwargs
@@ -82,10 +86,14 @@ async def test_task_without_context_integration(
 
     Tests that when Task.context is None, the runner handles it gracefully.
     """
-    mock_achat.return_value = "Check complete"
+    mock_achat.return_value = {
+        "content": "Check complete",
+        "cost_usd": 0.1,
+        "total_tokens": 100,
+    }
 
     runner = PhalanxTeamRunner(model_name="test-model")
-    result = await runner.execute_task(integration_task_without_context, integration_soul)
+    await runner.execute_task(integration_task_without_context, integration_soul)
 
     # Verify the prompt only has instruction (no context section)
     call_kwargs = mock_achat.call_args.kwargs
@@ -107,7 +115,11 @@ async def test_soul_system_prompt_integration_with_llm_client(
 
     Tests that the Soul's system_prompt makes it to the LLM client's achat call.
     """
-    mock_achat.return_value = "Response"
+    mock_achat.return_value = {
+        "content": "Response",
+        "cost_usd": 0.1,
+        "total_tokens": 100,
+    }
 
     runner = PhalanxTeamRunner(model_name="test-model")
     await runner.execute_task(integration_task_with_context, integration_soul)
@@ -129,7 +141,11 @@ async def test_execution_result_mapping_from_llm_response(
     Tests the transformation: LLMClient.achat() -> ExecutionResult
     """
     llm_response = "This is the detailed response from the LLM with multiple sentences and comprehensive output."
-    mock_achat.return_value = llm_response
+    mock_achat.return_value = {
+        "content": llm_response,
+        "cost_usd": 0.1,
+        "total_tokens": 100,
+    }
 
     runner = PhalanxTeamRunner(model_name="test-model")
     result = await runner.execute_task(integration_task_with_context, integration_soul)
@@ -191,7 +207,11 @@ async def test_multiple_tasks_with_same_soul(mock_achat, integration_soul):
     task2 = Task(id="task2", instruction="Second task", context="With context")
     task3 = Task(id="task3", instruction="Third task")
 
-    mock_achat.side_effect = ["Result 1", "Result 2", "Result 3"]
+    mock_achat.side_effect = [
+        {"content": "Result 1", "cost_usd": 0.1, "total_tokens": 100},
+        {"content": "Result 2", "cost_usd": 0.1, "total_tokens": 100},
+        {"content": "Result 3", "cost_usd": 0.1, "total_tokens": 100},
+    ]
 
     runner = PhalanxTeamRunner(model_name="test-model")
 
@@ -234,10 +254,14 @@ async def test_soul_tools_field_preserved_through_execution(
         ],
     )
 
-    mock_achat.return_value = "Task completed"
+    mock_achat.return_value = {
+        "content": "Task completed",
+        "cost_usd": 0.1,
+        "total_tokens": 100,
+    }
 
     runner = PhalanxTeamRunner(model_name="test-model")
-    result = await runner.execute_task(integration_task_with_context, soul_with_tools)
+    await runner.execute_task(integration_task_with_context, soul_with_tools)
 
     # Verify soul tools are still accessible after execution
     assert soul_with_tools.tools is not None
@@ -255,7 +279,11 @@ async def test_runner_model_name_integration(
 
     Tests that the model name specified in runner initialization is used.
     """
-    mock_achat.return_value = "Response"
+    mock_achat.return_value = {
+        "content": "Response",
+        "cost_usd": 0.1,
+        "total_tokens": 100,
+    }
 
     # Test with custom model
     runner = PhalanxTeamRunner(model_name="gpt-4-turbo")
@@ -280,7 +308,11 @@ async def test_empty_task_context_edge_case(mock_achat, integration_soul):
         context="",  # Empty string
     )
 
-    mock_achat.return_value = "Handled"
+    mock_achat.return_value = {
+        "content": "Handled",
+        "cost_usd": 0.1,
+        "total_tokens": 100,
+    }
 
     runner = PhalanxTeamRunner(model_name="test-model")
     result = await runner.execute_task(task_with_empty_context, integration_soul)

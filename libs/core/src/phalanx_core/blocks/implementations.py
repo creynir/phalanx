@@ -46,6 +46,7 @@ class LinearBlock(BaseBlock):
             New state with:
             - results[block_id] = execution output string
             - messages appended with execution summary
+            - total_cost_usd and total_tokens updated with execution result
 
         Raises:
             ValueError: If state.current_task is None.
@@ -65,6 +66,8 @@ class LinearBlock(BaseBlock):
                 + [
                     {"role": "system", "content": f"[Block {self.block_id}] Completed: {truncated}"}
                 ],
+                "total_cost_usd": state.total_cost_usd + result.cost_usd,
+                "total_tokens": state.total_tokens + result.total_tokens,
             }
         )
 
@@ -104,6 +107,7 @@ class FanOutBlock(BaseBlock):
             New state with:
             - results[block_id] = JSON list of {"soul_id": str, "output": str}
             - messages appended with fanout summary
+            - total_cost_usd and total_tokens updated with all execution results
 
         Raises:
             ValueError: If state.current_task is None.
@@ -119,6 +123,10 @@ class FanOutBlock(BaseBlock):
         # Aggregate outputs as JSON
         outputs = [{"soul_id": result.soul_id, "output": result.output} for result in results]
 
+        # Aggregate costs and tokens
+        total_cost = sum(result.cost_usd for result in results)
+        total_tokens = sum(result.total_tokens for result in results)
+
         return state.model_copy(
             update={
                 "results": {**state.results, self.block_id: json.dumps(outputs, indent=2)},
@@ -129,6 +137,8 @@ class FanOutBlock(BaseBlock):
                         "content": f"[Block {self.block_id}] FanOut completed with {len(self.souls)} agents",
                     }
                 ],
+                "total_cost_usd": state.total_cost_usd + total_cost,
+                "total_tokens": state.total_tokens + total_tokens,
             }
         )
 
@@ -175,6 +185,7 @@ class SynthesizeBlock(BaseBlock):
             New state with:
             - results[block_id] = synthesized output string
             - messages appended with synthesis summary
+            - total_cost_usd and total_tokens updated with execution result
 
         Raises:
             ValueError: If any input_block_id missing from state.results.
@@ -213,6 +224,8 @@ class SynthesizeBlock(BaseBlock):
                         "content": f"[Block {self.block_id}] Synthesized {len(self.input_block_ids)} inputs",
                     }
                 ],
+                "total_cost_usd": state.total_cost_usd + result.cost_usd,
+                "total_tokens": state.total_tokens + result.total_tokens,
             }
         )
 
@@ -264,6 +277,7 @@ class DebateBlock(BaseBlock):
             - results[block_id] = JSON transcript: [{"round": 1, "soul_a": "...", "soul_b": "..."}, ...]
             - shared_memory[f"{block_id}_conclusion"] = final soul_b response
             - messages appended with debate summary
+            - total_cost_usd and total_tokens updated with all execution results
 
         Raises:
             ValueError: If state.current_task is None.
@@ -273,6 +287,8 @@ class DebateBlock(BaseBlock):
 
         transcript: List[Dict[str, Any]] = []
         previous_b_output: str = ""
+        total_cost = 0.0
+        total_tokens = 0
 
         for round_num in range(1, self.iterations + 1):
             # Soul A responds (includes previous B output if available)
@@ -287,6 +303,8 @@ class DebateBlock(BaseBlock):
                 context=task_a_context,
             )
             result_a = await self.runner.execute_task(task_a, self.soul_a)
+            total_cost += result_a.cost_usd
+            total_tokens += result_a.total_tokens
 
             # Soul B responds to A's output
             task_b = Task(
@@ -295,6 +313,8 @@ class DebateBlock(BaseBlock):
                 context=f"Response from {self.soul_a.role}: {result_a.output}",
             )
             result_b = await self.runner.execute_task(task_b, self.soul_b)
+            total_cost += result_b.cost_usd
+            total_tokens += result_b.total_tokens
 
             transcript.append(
                 {"round": round_num, "soul_a": result_a.output, "soul_b": result_b.output}
@@ -318,6 +338,8 @@ class DebateBlock(BaseBlock):
                         "content": f"[Block {self.block_id}] Debate completed: {self.iterations} rounds",
                     }
                 ],
+                "total_cost_usd": state.total_cost_usd + total_cost,
+                "total_tokens": state.total_tokens + total_tokens,
             }
         )
 
@@ -489,6 +511,7 @@ class TeamLeadBlock(BaseBlock):
             - results[block_id] = recommendation text
             - shared_memory[f"{block_id}_recommendation"] = recommendation text
             - messages appended with advisor summary
+            - total_cost_usd and total_tokens updated with execution result
 
         Raises:
             ValueError: If any failure_context_key missing from state.shared_memory.
@@ -545,6 +568,8 @@ Provide your analysis and recommendations in a structured format."""
                         "content": f"[Block {self.block_id}] TeamLeadBlock analyzed {len(self.failure_context_keys)} context(s)",
                     }
                 ],
+                "total_cost_usd": state.total_cost_usd + result.cost_usd,
+                "total_tokens": state.total_tokens + result.total_tokens,
             }
         )
 
@@ -588,6 +613,7 @@ class EngineeringManagerBlock(BaseBlock):
             - results[block_id] = text plan from LLM
             - metadata[f"{block_id}_new_steps"] = List[Dict[str, str]] with keys: step_id, description
             - messages appended with replanner summary
+            - total_cost_usd and total_tokens updated with execution result
 
         Raises:
             ValueError: If state.current_task is None.
@@ -665,6 +691,8 @@ Your plan:"""
                         "content": f"[Block {self.block_id}] EngineeringManagerBlock generated {len(structured_steps)} step(s)",
                     }
                 ],
+                "total_cost_usd": state.total_cost_usd + result.cost_usd,
+                "total_tokens": state.total_tokens + result.total_tokens,
             }
         )
 
@@ -720,6 +748,7 @@ class MessageBusBlock(BaseBlock):
             - results[block_id] = JSON transcript: [{"round": int, "contributions": [{"soul_id": str, "output": str}]}]
             - shared_memory[f"{block_id}_consensus"] = final agent output from last round
             - messages appended with message bus summary
+            - total_cost_usd and total_tokens updated with all execution results
 
         Raises:
             ValueError: If state.current_task is None.
@@ -730,6 +759,8 @@ class MessageBusBlock(BaseBlock):
 
         # Step 2: Initialize transcript
         transcript: List[Dict[str, Any]] = []
+        total_cost = 0.0
+        total_tokens = 0
 
         # Step 3: Execute iterations
         for round_num in range(1, self.iterations + 1):
@@ -757,6 +788,8 @@ class MessageBusBlock(BaseBlock):
 
                 # Execute task
                 result = await self.runner.execute_task(task, soul)
+                total_cost += result.cost_usd
+                total_tokens += result.total_tokens
 
                 # Record contribution
                 round_contributions.append({"soul_id": soul.id, "output": result.output})
@@ -783,6 +816,8 @@ class MessageBusBlock(BaseBlock):
                         "content": f"[Block {self.block_id}] MessageBus completed: {len(self.souls)} agents × {self.iterations} rounds",
                     }
                 ],
+                "total_cost_usd": state.total_cost_usd + total_cost,
+                "total_tokens": state.total_tokens + total_tokens,
             }
         )
 
@@ -838,11 +873,14 @@ class RouterBlock(BaseBlock):
             - results[block_id] = decision string (e.g., "approved", "rejected")
             - metadata[f"{block_id}_decision"] = decision string
             - messages appended with routing decision summary
+            - total_cost_usd and total_tokens updated with execution result (if Soul evaluator)
 
         Raises:
             ValueError: If condition_evaluator is Soul but current_task is None.
         """
         # Step 1: Evaluate condition based on type
+        additional_cost = 0.0
+        additional_tokens = 0
         if isinstance(self.condition_evaluator, Soul):
             # Soul-based evaluation (LLM decides)
             if state.current_task is None:
@@ -855,6 +893,8 @@ class RouterBlock(BaseBlock):
             assert self.runner is not None, "Runner must be provided for Soul evaluator"
             result = await self.runner.execute_task(state.current_task, self.condition_evaluator)
             decision = result.output.strip()
+            additional_cost = result.cost_usd
+            additional_tokens = result.total_tokens
         else:
             # Callable-based evaluation (function decides)
             decision = self.condition_evaluator(state)
@@ -874,6 +914,8 @@ class RouterBlock(BaseBlock):
                         "content": f"[Block {self.block_id}] RouterBlock decision: {decision}",
                     }
                 ],
+                "total_cost_usd": state.total_cost_usd + additional_cost,
+                "total_tokens": state.total_tokens + additional_tokens,
             }
         )
 
