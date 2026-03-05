@@ -46,6 +46,6 @@
 ---
 
 ## Phase 1.6: Advanced Control & Memory
+- **Human-in-the-Loop (HITL) & Runtime Pausing:** Implement `ApprovalBlock` to pause execution. Allows users to manually change inputs, add/remove blocks in the live queue, and edit prompts before resuming.
 - **Auto-Learning Memory:** Vector DB storage of successful error-recovery trajectories (when the system heals itself, it remembers the solution).
-- **Human-in-the-Loop (HITL):** `ApprovalBlock` that pauses the Workflow state, awaiting manual intervention/confirmation from the CLI or GUI before resuming.
 - **Cost & Budget Limits:** Execution constraints tied to specific Workflows to prevent runaway loops.
