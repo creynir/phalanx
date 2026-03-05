@@ -5,7 +5,7 @@ Exports: parse_workflow_yaml, BUILT_IN_SOULS, BLOCK_TYPE_REGISTRY
 
 from __future__ import annotations
 
-import yaml
+import yaml  # type: ignore[import-untyped]
 from typing import Any, Callable, Dict, Union
 
 from phalanx_core.blocks.base import BaseBlock
@@ -277,7 +277,7 @@ BLOCK_TYPE_REGISTRY: Dict[str, BlockBuilder] = {
 }
 
 
-def parse_workflow_yaml(yaml_str_or_dict: Union[str, dict]) -> Workflow:
+def parse_workflow_yaml(yaml_str_or_dict: Union[str, Dict[str, Any]]) -> Workflow:
     """
     Parse a YAML workflow definition into a runnable Workflow object.
 

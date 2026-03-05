@@ -19,7 +19,7 @@ import sys
 from pathlib import Path
 from typing import Dict, Tuple
 
-import yaml
+import yaml  # type: ignore[import-untyped]
 
 from phalanx_core.blocks.base import BaseBlock
 from phalanx_core.primitives import Soul
