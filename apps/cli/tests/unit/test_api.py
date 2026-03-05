@@ -3,9 +3,9 @@
 Covers all acceptance criteria:
 - GET /api/workflows returns a list of workflow names
 - POST /api/workflows accepts YAML and saves to custom/workflows/{id}.yaml
-- GET /api/tasks returns a list of task names
-- POST /api/tasks accepts YAML and saves to custom/tasks/{id}.yaml
-- GET /api/workflows/{name} and GET /api/tasks/{name} return file contents
+- GET /api/actions returns a list of action names
+- POST /api/actions accepts YAML and saves to custom/actions/{id}.yaml
+- GET /api/workflows/{name} and GET /api/actions/{name} return file contents
 - Missing directories are created automatically
 - 404 is returned for missing files
 """
@@ -146,109 +146,109 @@ class TestGetWorkflow:
         assert response.json()["content"] == yaml_content
 
 
-class TestListTasks:
-    """Test GET /api/tasks endpoint."""
+class TestListActions:
+    """Test GET /api/actions endpoint."""
 
-    def test_list_tasks_empty(self, client):
-        """Test listing tasks when none exist."""
-        response = client.get("/api/tasks")
+    def test_list_actions_empty(self, client):
+        """Test listing actions when none exist."""
+        response = client.get("/api/actions")
         assert response.status_code == 200
         assert response.json() == []
 
-    def test_list_tasks_with_items(self, client, tmp_path):
-        """Test listing tasks when some exist."""
-        custom_dir = tmp_path / "custom" / "tasks"
+    def test_list_actions_with_items(self, client, tmp_path):
+        """Test listing actions when some exist."""
+        custom_dir = tmp_path / "custom" / "actions"
         custom_dir.mkdir(parents=True, exist_ok=True)
-        (custom_dir / "task1.yaml").write_text("version: '1.0'")
-        (custom_dir / "task2.yaml").write_text("version: '1.0'")
+        (custom_dir / "action1.yaml").write_text("version: '1.0'")
+        (custom_dir / "action2.yaml").write_text("version: '1.0'")
 
-        response = client.get("/api/tasks")
+        response = client.get("/api/actions")
         assert response.status_code == 200
         data = response.json()
         assert len(data) == 2
         names = [item["name"] for item in data]
-        assert sorted(names) == ["task1", "task2"]
+        assert sorted(names) == ["action1", "action2"]
 
-    def test_list_tasks_sorted(self, client, tmp_path):
-        """Test that tasks are returned in sorted order."""
-        custom_dir = tmp_path / "custom" / "tasks"
+    def test_list_actions_sorted(self, client, tmp_path):
+        """Test that actions are returned in sorted order."""
+        custom_dir = tmp_path / "custom" / "actions"
         custom_dir.mkdir(parents=True, exist_ok=True)
-        (custom_dir / "z_task.yaml").write_text("version: '1.0'")
-        (custom_dir / "a_task.yaml").write_text("version: '1.0'")
-        (custom_dir / "m_task.yaml").write_text("version: '1.0'")
+        (custom_dir / "z_action.yaml").write_text("version: '1.0'")
+        (custom_dir / "a_action.yaml").write_text("version: '1.0'")
+        (custom_dir / "m_action.yaml").write_text("version: '1.0'")
 
-        response = client.get("/api/tasks")
+        response = client.get("/api/actions")
         assert response.status_code == 200
         data = response.json()
         names = [item["name"] for item in data]
-        assert names == ["a_task", "m_task", "z_task"]
+        assert names == ["a_action", "m_action", "z_action"]
 
 
-class TestCreateTask:
-    """Test POST /api/tasks endpoint."""
+class TestCreateAction:
+    """Test POST /api/actions endpoint."""
 
-    def test_create_task_auto_creates_directory(self, client, tmp_path):
-        """Test that POST /api/tasks creates the directory if it doesn't exist."""
-        custom_dir = tmp_path / "custom" / "tasks"
+    def test_create_action_auto_creates_directory(self, client, tmp_path):
+        """Test that POST /api/actions creates the directory if it doesn't exist."""
+        custom_dir = tmp_path / "custom" / "actions"
         assert not custom_dir.exists()
 
-        response = client.post("/api/tasks", json={"content": "version: '1.0'\nname: MyTask"})
+        response = client.post("/api/actions", json={"content": "version: '1.0'\nname: MyAction"})
         assert response.status_code == 200
         data = response.json()
         assert "id" in data
         assert custom_dir.exists()
 
-    def test_create_task_writes_file(self, client, tmp_path):
-        """Test that POST /api/tasks writes the YAML file."""
-        yaml_content = "version: '1.0'\nname: TestTask"
-        response = client.post("/api/tasks", json={"content": yaml_content})
+    def test_create_action_writes_file(self, client, tmp_path):
+        """Test that POST /api/actions writes the YAML file."""
+        yaml_content = "version: '1.0'\nname: TestAction"
+        response = client.post("/api/actions", json={"content": yaml_content})
         assert response.status_code == 200
         data = response.json()
-        task_id = data["id"]
+        action_id = data["id"]
 
-        file_path = tmp_path / "custom" / "tasks" / f"{task_id}.yaml"
+        file_path = tmp_path / "custom" / "actions" / f"{action_id}.yaml"
         assert file_path.exists()
         assert file_path.read_text() == yaml_content
 
-    def test_create_task_generates_unique_id(self, client):
-        """Test that each task gets a unique ID."""
+    def test_create_action_generates_unique_id(self, client):
+        """Test that each action gets a unique ID."""
         yaml_content = "version: '1.0'"
-        response1 = client.post("/api/tasks", json={"content": yaml_content})
-        response2 = client.post("/api/tasks", json={"content": yaml_content})
+        response1 = client.post("/api/actions", json={"content": yaml_content})
+        response2 = client.post("/api/actions", json={"content": yaml_content})
 
         id1 = response1.json()["id"]
         id2 = response2.json()["id"]
         assert id1 != id2
 
 
-class TestGetTask:
-    """Test GET /api/tasks/{name} endpoint."""
+class TestGetAction:
+    """Test GET /api/actions/{name} endpoint."""
 
-    def test_get_task_success(self, client, tmp_path):
-        """Test retrieving an existing task."""
-        custom_dir = tmp_path / "custom" / "tasks"
+    def test_get_action_success(self, client, tmp_path):
+        """Test retrieving an existing action."""
+        custom_dir = tmp_path / "custom" / "actions"
         custom_dir.mkdir(parents=True, exist_ok=True)
-        yaml_content = "version: '1.0'\nname: MyTask"
-        (custom_dir / "test_task.yaml").write_text(yaml_content)
+        yaml_content = "version: '1.0'\nname: MyAction"
+        (custom_dir / "test_action.yaml").write_text(yaml_content)
 
-        response = client.get("/api/tasks/test_task")
+        response = client.get("/api/actions/test_action")
         assert response.status_code == 200
         assert response.json() == {"content": yaml_content}
 
-    def test_get_task_not_found(self, client):
-        """Test that 404 is returned for missing task."""
-        response = client.get("/api/tasks/nonexistent")
+    def test_get_action_not_found(self, client):
+        """Test that 404 is returned for missing action."""
+        response = client.get("/api/actions/nonexistent")
         assert response.status_code == 404
         data = response.json()
-        assert "task not found" in data["detail"].lower()
+        assert "action not found" in data["detail"].lower()
 
-    def test_get_task_with_uuid(self, client, tmp_path):
-        """Test retrieving a task by UUID."""
+    def test_get_action_with_uuid(self, client, tmp_path):
+        """Test retrieving an action by UUID."""
         yaml_content = "version: '1.0'"
-        response = client.post("/api/tasks", json={"content": yaml_content})
-        task_id = response.json()["id"]
+        response = client.post("/api/actions", json={"content": yaml_content})
+        action_id = response.json()["id"]
 
-        response = client.get(f"/api/tasks/{task_id}")
+        response = client.get(f"/api/actions/{action_id}")
         assert response.status_code == 200
         assert response.json()["content"] == yaml_content
 
@@ -276,61 +276,61 @@ class TestIntegration:
         assert response.status_code == 200
         assert response.json()["content"] == yaml_content
 
-    def test_task_lifecycle(self, client, tmp_path):
-        """Test complete task lifecycle: create, list, retrieve."""
-        # Create a task
-        yaml_content = "version: '1.0'\nname: IntegrationTask"
-        response = client.post("/api/tasks", json={"content": yaml_content})
+    def test_action_lifecycle(self, client, tmp_path):
+        """Test complete action lifecycle: create, list, retrieve."""
+        # Create an action
+        yaml_content = "version: '1.0'\nname: IntegrationAction"
+        response = client.post("/api/actions", json={"content": yaml_content})
         assert response.status_code == 200
-        task_id = response.json()["id"]
+        action_id = response.json()["id"]
 
-        # List tasks
-        response = client.get("/api/tasks")
+        # List actions
+        response = client.get("/api/actions")
         assert response.status_code == 200
         data = response.json()
         assert len(data) == 1
-        assert data[0]["name"] == task_id
+        assert data[0]["name"] == action_id
 
-        # Retrieve the task
-        response = client.get(f"/api/tasks/{task_id}")
+        # Retrieve the action
+        response = client.get(f"/api/actions/{action_id}")
         assert response.status_code == 200
         assert response.json()["content"] == yaml_content
 
-    def test_workflows_and_tasks_independent(self, client):
-        """Test that workflows and tasks are independent."""
-        # Create a workflow and a task
+    def test_workflows_and_actions_independent(self, client):
+        """Test that workflows and actions are independent."""
+        # Create a workflow and an action
         wf_content = "version: '1.0'\nname: WF"
-        task_content = "version: '1.0'\nname: Task"
+        action_content = "version: '1.0'\nname: Action"
 
         wf_response = client.post("/api/workflows", json={"content": wf_content})
-        task_response = client.post("/api/tasks", json={"content": task_content})
+        action_response = client.post("/api/actions", json={"content": action_content})
 
         wf_id = wf_response.json()["id"]
-        task_id = task_response.json()["id"]
+        action_id = action_response.json()["id"]
 
-        # Listing workflows should not include tasks
+        # Listing workflows should not include actions
         wf_list = client.get("/api/workflows").json()
         assert len(wf_list) == 1
         assert wf_list[0]["name"] == wf_id
 
-        # Listing tasks should not include workflows
-        task_list = client.get("/api/tasks").json()
-        assert len(task_list) == 1
-        assert task_list[0]["name"] == task_id
+        # Listing actions should not include workflows
+        action_list = client.get("/api/actions").json()
+        assert len(action_list) == 1
+        assert action_list[0]["name"] == action_id
 
-    def test_multiple_workflows_and_tasks(self, client):
-        """Test creating and listing multiple workflows and tasks."""
+    def test_multiple_workflows_and_actions(self, client):
+        """Test creating and listing multiple workflows and actions."""
         # Create multiple workflows
         for i in range(3):
             client.post("/api/workflows", json={"content": f"workflow_{i}"})
 
-        # Create multiple tasks
+        # Create multiple actions
         for i in range(2):
-            client.post("/api/tasks", json={"content": f"task_{i}"})
+            client.post("/api/actions", json={"content": f"action_{i}"})
 
         # Verify counts
         wf_list = client.get("/api/workflows").json()
-        task_list = client.get("/api/tasks").json()
+        action_list = client.get("/api/actions").json()
 
         assert len(wf_list) == 3
-        assert len(task_list) == 2
+        assert len(action_list) == 2

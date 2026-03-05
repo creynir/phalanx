@@ -1,8 +1,8 @@
 """
-FastAPI application for managing workflows and tasks.
+FastAPI application for managing workflows and actions.
 
-Provides REST endpoints for listing, creating, and retrieving workflows and tasks.
-Workflows and tasks are stored as YAML files in custom/workflows/ and custom/tasks/.
+Provides REST endpoints for listing, creating, and retrieving workflows and actions.
+Workflows and actions are stored as YAML files in custom/workflows/ and custom/actions/.
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 # Create the FastAPI app instance
 app = FastAPI(title="Phalanx API", version="1.0.0")
 
-# Default base directory for custom workflows and tasks
+# Default base directory for custom workflows and actions
 DEFAULT_CUSTOM_BASE = Path("custom")
 
 
@@ -31,7 +31,7 @@ class YAMLContent(BaseModel):
 
 
 class ItemInfo(BaseModel):
-    """Information about a workflow or task."""
+    """Information about a workflow or action."""
 
     name: str
 
@@ -48,10 +48,10 @@ def _get_base_dir() -> Path:
 
 
 def _list_items(item_type: str) -> list[str]:
-    """List all item names (workflow or task) in the custom directory.
+    """List all item names (workflow or action) in the custom directory.
 
     Args:
-        item_type: Either "workflows" or "tasks"
+        item_type: Either "workflows" or "actions"
 
     Returns:
         List of item names (without .yaml extension)
@@ -73,7 +73,7 @@ def _get_item_path(item_type: str, name: str) -> Path:
     """Get the full path to an item file.
 
     Args:
-        item_type: Either "workflows" or "tasks"
+        item_type: Either "workflows" or "actions"
         name: The item name (without extension)
 
     Returns:
@@ -84,10 +84,10 @@ def _get_item_path(item_type: str, name: str) -> Path:
 
 
 def _read_item(item_type: str, name: str) -> str:
-    """Read the contents of a workflow or task file.
+    """Read the contents of a workflow or action file.
 
     Args:
-        item_type: Either "workflows" or "tasks"
+        item_type: Either "workflows" or "actions"
         name: The item name (without extension)
 
     Returns:
@@ -105,12 +105,12 @@ def _read_item(item_type: str, name: str) -> str:
 
 
 def _write_item(item_type: str, name: str, content: str) -> None:
-    """Write YAML content to a workflow or task file.
+    """Write YAML content to a workflow or action file.
 
     Creates the directory if it doesn't exist.
 
     Args:
-        item_type: Either "workflows" or "tasks"
+        item_type: Either "workflows" or "actions"
         name: The item name (without extension)
         content: The YAML content to write
     """
@@ -172,49 +172,49 @@ def get_workflow(name: str) -> dict[str, str]:
     return {"content": content}
 
 
-# Tasks endpoints
+# Actions endpoints
 
 
-@app.get("/api/tasks", response_model=list[ItemInfo])
-def list_tasks() -> list[ItemInfo]:
-    """Get a list of all tasks.
+@app.get("/api/actions", response_model=list[ItemInfo])
+def list_actions() -> list[ItemInfo]:
+    """Get a list of all actions.
 
     Returns:
-        List of task names
+        List of action names
     """
-    names = _list_items("tasks")
+    names = _list_items("actions")
     return [ItemInfo(name=name) for name in names]
 
 
-@app.post("/api/tasks", response_model=dict[str, Any])
-def create_task(body: YAMLContent) -> dict[str, Any]:
-    """Create a new task from YAML content.
+@app.post("/api/actions", response_model=dict[str, Any])
+def create_action(body: YAMLContent) -> dict[str, Any]:
+    """Create a new action from YAML content.
 
-    Generates a unique ID for the task and saves it to custom/tasks/{id}.yaml.
+    Generates a unique ID for the action and saves it to custom/actions/{id}.yaml.
 
     Args:
         body: Request body with 'content' field containing YAML
 
     Returns:
-        Dictionary with the generated task ID
+        Dictionary with the generated action ID
     """
-    task_id = str(uuid.uuid4())
-    _write_item("tasks", task_id, body.content)
-    return {"id": task_id}
+    action_id = str(uuid.uuid4())
+    _write_item("actions", action_id, body.content)
+    return {"id": action_id}
 
 
-@app.get("/api/tasks/{name}")
-def get_task(name: str) -> dict[str, str]:
-    """Get the contents of a specific task.
+@app.get("/api/actions/{name}")
+def get_action(name: str) -> dict[str, str]:
+    """Get the contents of a specific action.
 
     Args:
-        name: The task name/ID (without .yaml extension)
+        name: The action name/ID (without .yaml extension)
 
     Returns:
         Dictionary with 'content' field containing the YAML
 
     Raises:
-        HTTPException: 404 if the task does not exist
+        HTTPException: 404 if the action does not exist
     """
-    content = _read_item("tasks", name)
+    content = _read_item("actions", name)
     return {"content": content}
