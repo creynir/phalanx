@@ -24,6 +24,16 @@ class TaskDef(BaseModel):
     context: Optional[str] = None
 
 
+class PhalanxTaskFile(BaseModel):
+    """
+    Root model for a Phalanx task YAML file.
+    Uses wrapper format: version + task.
+    """
+
+    version: str = "1.0"
+    task: TaskDef  # required — no default; Pydantic raises ValidationError if absent
+
+
 class BlockDef(BaseModel):
     """
     Block definition. `type` is the only required field.

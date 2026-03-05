@@ -26,8 +26,8 @@ from phalanx_core.runner import PhalanxTeamRunner
 from phalanx_core.workflow import Workflow
 from phalanx_core.yaml.schema import (
     BlockDef,
+    PhalanxTaskFile,
     PhalanxWorkflowFile,
-    TaskDef,
 )
 
 
@@ -410,7 +410,8 @@ def parse_task_yaml(yaml_str_or_dict: Union[str, Dict[str, Any]]) -> Task:
         raw = yaml_str_or_dict
 
     # Step 2: Validate against Pydantic schema (raises ValidationError on failure)
-    task_def = TaskDef.model_validate(raw)
+    file_def = PhalanxTaskFile.model_validate(raw)
+    task_def = file_def.task
 
     # Step 3: Create and return Task primitive
     return Task(

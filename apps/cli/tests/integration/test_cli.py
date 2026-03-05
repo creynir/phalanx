@@ -193,7 +193,9 @@ blocks:
         )
 
         task_file = tmp_path / "task.yaml"
-        task_file.write_text("id: test_task\ninstruction: Do something\n")
+        task_file.write_text(
+            "version: '1.0'\ntask:\n  id: test_task\n  instruction: Do something\n"
+        )
 
         result = runner.invoke(cli, ["run", str(workflow_file), "--task", str(task_file)])
         assert result.exit_code == 0
