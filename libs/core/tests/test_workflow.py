@@ -144,3 +144,405 @@ def test_workflow_duplicate_transition():
 
     with pytest.raises(ValueError, match="already has transition"):
         wf.add_transition("a", "c")
+
+
+# ============================================================================
+# Tests for Conditional Transitions (AC-2 through AC-10)
+# ============================================================================
+
+
+def test_add_conditional_transition_fluent_return():
+    """AC-5: add_conditional_transition() returns self for fluent chaining."""
+    wf = Workflow(name="test_wf")
+    wf.add_block(MockBlock("router"))
+    wf.add_block(MockBlock("path_a"))
+
+    result = wf.add_conditional_transition("router", {"yes": "path_a"})
+    assert result is wf
+
+
+def test_add_conditional_transition_conflict_with_plain():
+    """AC-2: add_conditional_transition() raises ValueError when plain transition exists."""
+    wf = Workflow(name="test_wf")
+    wf.add_block(MockBlock("r"))
+    wf.add_block(MockBlock("x"))
+
+    # Add plain transition first
+    wf.add_transition("r", "x")
+
+    # Try to add conditional transition (should fail)
+    with pytest.raises(ValueError, match="already has a plain transition"):
+        wf.add_conditional_transition("r", {"yes": "x"})
+
+
+def test_add_transition_conflict_with_conditional():
+    """AC-3: add_transition() raises ValueError when conditional transition exists."""
+    wf = Workflow(name="test_wf")
+    wf.add_block(MockBlock("r"))
+    wf.add_block(MockBlock("x"))
+
+    # Add conditional transition first
+    wf.add_conditional_transition("r", {"yes": "x"})
+
+    # Try to add plain transition (should fail)
+    with pytest.raises(ValueError, match="already has a conditional transition"):
+        wf.add_transition("r", "x")
+
+
+def test_add_conditional_transition_duplicate():
+    """AC-4: add_conditional_transition() raises ValueError if called twice for same from_step_id."""
+    wf = Workflow(name="test_wf")
+    wf.add_block(MockBlock("router"))
+    wf.add_block(MockBlock("path_a"))
+    wf.add_block(MockBlock("path_b"))
+
+    wf.add_conditional_transition("router", {"yes": "path_a"})
+
+    # Try to add another conditional transition for same source
+    with pytest.raises(ValueError, match="already has a conditional transition"):
+        wf.add_conditional_transition("router", {"no": "path_b"})
+
+
+def test_validate_conditional_target_not_registered():
+    """AC-6: validate() returns error list containing unregistered target block ID string."""
+    wf = Workflow(name="test_wf")
+    wf.add_block(MockBlock("router"))
+    wf.add_conditional_transition("router", {"yes": "nonexistent_block"})
+    wf.set_entry("router")
+
+    errors = wf.validate()
+    assert len(errors) > 0
+    assert any("nonexistent_block" in e for e in errors)
+
+
+def test_detect_cycle_with_conditional_transitions():
+    """AC-7: _detect_cycle() traverses conditional transition targets."""
+    wf = Workflow(name="cyclic_wf")
+    wf.add_block(MockBlock("router"))
+    wf.add_block(MockBlock("action"))
+
+    # Create cycle through conditional transition: router -[yes]-> action -plain-> router
+    wf.add_conditional_transition("router", {"yes": "action", "no": "router"})
+    wf.add_transition("action", "router")
+    wf.set_entry("router")
+
+    errors = wf.validate()
+    assert any("Cycle detected" in e for e in errors)
+
+
+def test_resolve_next_global_key():
+    """AC-8: _resolve_next() reads state.metadata['router_decision'] first."""
+    wf = Workflow(name="test_wf")
+    wf.add_block(MockBlock("router"))
+    wf.add_block(MockBlock("path_a"))
+    wf.add_conditional_transition("router", {"approved": "path_a"})
+
+    state = WorkflowState(metadata={"router_decision": "approved"})
+    next_id = wf._resolve_next("router", state)
+    assert next_id == "path_a"
+
+
+def test_resolve_next_block_scoped_key_fallback():
+    """AC-8: _resolve_next() falls back to state.metadata['{block_id}_decision']."""
+    wf = Workflow(name="test_wf")
+    wf.add_block(MockBlock("router"))
+    wf.add_block(MockBlock("path_a"))
+    wf.add_conditional_transition("router", {"approved": "path_a"})
+
+    # Only block-scoped key present (no global key)
+    state = WorkflowState(metadata={"router_decision": "approved"})
+    next_id = wf._resolve_next("router", state)
+    assert next_id == "path_a"
+
+
+def test_resolve_next_default_fallback():
+    """AC-10: _resolve_next() uses condition_map['default'] when decision not explicit key."""
+    wf = Workflow(name="test_wf")
+    wf.add_block(MockBlock("router"))
+    wf.add_block(MockBlock("default_path"))
+    wf.add_conditional_transition("router", {"yes": "path_a", "default": "default_path"})
+
+    # Unknown decision value
+    state = WorkflowState(metadata={"router_decision": "unknown"})
+    next_id = wf._resolve_next("router", state)
+    assert next_id == "default_path"
+
+
+def test_resolve_next_no_default_raises_key_error():
+    """AC-9: _resolve_next() raises KeyError when decision not in map and no 'default'."""
+    wf = Workflow(name="test_wf")
+    wf.add_block(MockBlock("router"))
+    wf.add_block(MockBlock("path_a"))
+    wf.add_conditional_transition("router", {"yes": "path_a"})
+
+    # Unknown decision, no default
+    state = WorkflowState(metadata={"router_decision": "unknown"})
+    with pytest.raises(KeyError):
+        wf._resolve_next("router", state)
+
+
+@pytest.mark.asyncio
+async def test_dynamic_routing_global_decision():
+    """Test conditional routing with global router_decision key."""
+    approved_block = MockBlock("approve_path", "Approved output")
+    rejected_block = MockBlock("reject_path", "Rejected output")
+
+    class RouterMock(BaseBlock):
+        def __init__(self) -> None:
+            super().__init__("router")
+
+        async def execute(self, state: WorkflowState) -> WorkflowState:
+            # Simulate RouterBlock writing global decision key
+            return state.model_copy(
+                update={
+                    "results": {**state.results, self.block_id: "approved"},
+                    "metadata": {**state.metadata, "router_decision": "approved"},
+                    "messages": state.messages
+                    + [{"role": "system", "content": "[Block router] RouterMock"}],
+                }
+            )
+
+    wf = Workflow(name="routing_test")
+    wf.add_block(RouterMock())
+    wf.add_block(approved_block)
+    wf.add_block(rejected_block)
+    wf.add_conditional_transition(
+        "router",
+        {"approved": "approve_path", "rejected": "reject_path", "default": "reject_path"},
+    )
+    wf.add_transition("approve_path", None)
+    wf.add_transition("reject_path", None)
+    wf.set_entry("router")
+
+    errors = wf.validate()
+    assert not errors
+
+    state = WorkflowState()
+    await wf.run(state)
+
+    assert approved_block.executed is True
+    assert rejected_block.executed is False
+
+
+@pytest.mark.asyncio
+async def test_dynamic_routing_block_scoped_decision():
+    """Test conditional routing with block-scoped {block_id}_decision key."""
+    approved_block = MockBlock("approve_path", "Approved output")
+    rejected_block = MockBlock("reject_path", "Rejected output")
+
+    class RouterMock(BaseBlock):
+        def __init__(self) -> None:
+            super().__init__("router")
+
+        async def execute(self, state: WorkflowState) -> WorkflowState:
+            # Write only block-scoped key (no global router_decision)
+            return state.model_copy(
+                update={
+                    "results": {**state.results, self.block_id: "rejected"},
+                    "metadata": {**state.metadata, "router_decision": "rejected"},
+                    "messages": state.messages
+                    + [{"role": "system", "content": "[Block router] RouterMock"}],
+                }
+            )
+
+    wf = Workflow(name="routing_test")
+    wf.add_block(RouterMock())
+    wf.add_block(approved_block)
+    wf.add_block(rejected_block)
+    wf.add_conditional_transition(
+        "router",
+        {"approved": "approve_path", "rejected": "reject_path", "default": "approve_path"},
+    )
+    wf.add_transition("approve_path", None)
+    wf.add_transition("reject_path", None)
+    wf.set_entry("router")
+
+    state = WorkflowState()
+    await wf.run(state)
+
+    assert rejected_block.executed is True
+
+
+@pytest.mark.asyncio
+async def test_dynamic_injection_with_registry():
+    """Test dynamic step injection with custom registry."""
+    from phalanx_core.blocks.registry import BlockRegistry
+
+    injected_mock = MockBlock("injected_step", "Injected result")
+    terminal_block = MockBlock("terminal", "Terminal output")
+
+    class PlannerBlock(BaseBlock):
+        """Simulates EngineeringManagerBlock: writes _new_steps to metadata."""
+
+        def __init__(self) -> None:
+            super().__init__("planner")
+
+        async def execute(self, state: WorkflowState) -> WorkflowState:
+            return state.model_copy(
+                update={
+                    "results": {**state.results, self.block_id: "plan generated"},
+                    "metadata": {
+                        **state.metadata,
+                        "planner_new_steps": [
+                            {"step_id": "injected_step", "description": "Do injected work"}
+                        ],
+                    },
+                    "messages": state.messages
+                    + [{"role": "system", "content": "[Block planner] PlannerBlock"}],
+                }
+            )
+
+    wf = Workflow(name="injection_test")
+    wf.add_block(PlannerBlock())
+    wf.add_block(terminal_block)
+    wf.add_transition("planner", "terminal")
+    wf.add_transition("terminal", None)
+    wf.set_entry("planner")
+
+    # Registry with custom factory returning our injected_mock
+    registry = BlockRegistry()
+    registry.register("injected_step", lambda sid, desc: injected_mock)
+
+    state = WorkflowState()
+    final_state = await wf.run(state, registry=registry)
+
+    assert injected_mock.executed is True
+    assert "injected_step" in final_state.results
+    assert terminal_block.executed is True
+
+
+@pytest.mark.asyncio
+async def test_dynamic_injection_placeholder_fallback():
+    """Test dynamic step injection falls back to PlaceholderBlock when registry is None."""
+    terminal_block = MockBlock("terminal", "Terminal output")
+
+    class PlannerBlock(BaseBlock):
+        def __init__(self) -> None:
+            super().__init__("planner")
+
+        async def execute(self, state: WorkflowState) -> WorkflowState:
+            return state.model_copy(
+                update={
+                    "results": {**state.results, self.block_id: "plan generated"},
+                    "metadata": {
+                        **state.metadata,
+                        "planner_new_steps": [
+                            {
+                                "step_id": "injected_step",
+                                "description": "Do injected work",
+                            }
+                        ],
+                    },
+                    "messages": state.messages
+                    + [{"role": "system", "content": "[Block planner] PlannerBlock"}],
+                }
+            )
+
+    wf = Workflow(name="injection_test")
+    wf.add_block(PlannerBlock())
+    wf.add_block(terminal_block)
+    wf.add_transition("planner", "terminal")
+    wf.add_transition("terminal", None)
+    wf.set_entry("planner")
+
+    state = WorkflowState()
+    final_state = await wf.run(state, registry=None)
+
+    assert "injected_step" in final_state.results
+    # PlaceholderBlock echoes description string
+    assert final_state.results["injected_step"] == "Do injected work"
+    assert terminal_block.executed is True
+
+
+def test_dynamic_injection_missing_step_id():
+    """Test dynamic injection raises ValueError for missing 'step_id' key."""
+    import asyncio
+
+    class BadPlannerBlock(BaseBlock):
+        def __init__(self) -> None:
+            super().__init__("planner")
+
+        async def execute(self, state: WorkflowState) -> WorkflowState:
+            return state.model_copy(
+                update={
+                    "results": {**state.results, self.block_id: "plan generated"},
+                    "metadata": {
+                        **state.metadata,
+                        "planner_new_steps": [
+                            {"description": "Do injected work"}  # Missing step_id
+                        ],
+                    },
+                    "messages": state.messages
+                    + [{"role": "system", "content": "[Block planner] BadPlannerBlock"}],
+                }
+            )
+
+    wf = Workflow(name="injection_test")
+    wf.add_block(BadPlannerBlock())
+    wf.add_transition("planner", None)
+    wf.set_entry("planner")
+
+    async def run_test() -> None:
+        state = WorkflowState()
+        with pytest.raises(ValueError, match="missing 'step_id' or 'description'"):
+            await wf.run(state)
+
+    asyncio.run(run_test())
+
+
+def test_dynamic_injection_missing_description():
+    """Test dynamic injection raises ValueError for missing 'description' key."""
+    import asyncio
+
+    class BadPlannerBlock(BaseBlock):
+        def __init__(self) -> None:
+            super().__init__("planner")
+
+        async def execute(self, state: WorkflowState) -> WorkflowState:
+            return state.model_copy(
+                update={
+                    "results": {**state.results, self.block_id: "plan generated"},
+                    "metadata": {
+                        **state.metadata,
+                        "planner_new_steps": [
+                            {"step_id": "injected_step"}  # Missing description
+                        ],
+                    },
+                    "messages": state.messages
+                    + [{"role": "system", "content": "[Block planner] BadPlannerBlock"}],
+                }
+            )
+
+    wf = Workflow(name="injection_test")
+    wf.add_block(BadPlannerBlock())
+    wf.add_transition("planner", None)
+    wf.set_entry("planner")
+
+    async def run_test() -> None:
+        state = WorkflowState()
+        with pytest.raises(ValueError, match="missing 'step_id' or 'description'"):
+            await wf.run(state)
+
+    asyncio.run(run_test())
+
+
+@pytest.mark.asyncio
+async def test_run_backward_compatible_without_registry():
+    """AC-11: run(state) without registry parameter continues to work."""
+    wf = Workflow(name="simple_wf")
+    block_a = MockBlock("a", "Output A")
+    block_b = MockBlock("b", "Output B")
+
+    wf.add_block(block_a)
+    wf.add_block(block_b)
+    wf.add_transition("a", "b")
+    wf.add_transition("b", None)
+    wf.set_entry("a")
+
+    # Call without registry parameter (backward compatible)
+    initial_state = WorkflowState()
+    final_state = await wf.run(initial_state)
+
+    assert block_a.executed
+    assert block_b.executed
+    assert final_state.results == {"a": "Output A", "b": "Output B"}
