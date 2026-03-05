@@ -4,6 +4,7 @@ Concrete block implementations for workflow composition.
 
 import asyncio
 import json
+import re
 from typing import Dict, List, Optional
 
 from phalanx_core.blocks.base import BaseBlock
@@ -542,6 +543,126 @@ Provide your analysis and recommendations in a structured format."""
                     {
                         "role": "system",
                         "content": f"[Block {self.block_id}] AdvisorBlock analyzed {len(self.failure_context_keys)} context(s)",
+                    }
+                ],
+            }
+        )
+
+
+class ReplannerBlock(BaseBlock):
+    """
+    Generate alternative execution plan using LLM, parse into structured steps.
+
+    Typical Use: After workflow failure, generate new plan with structured steps.
+    Example: ReplannerBlock reads current task and failure context, produces plan + JSON steps.
+    """
+
+    def __init__(
+        self,
+        block_id: str,
+        planner_soul: Soul,
+        runner: PhalanxTeamRunner,
+    ):
+        """
+        Args:
+            block_id: Unique block identifier.
+            planner_soul: Agent that generates execution plans.
+            runner: Execution engine for running tasks.
+
+        Raises:
+            ValueError: If block_id is empty (from BaseBlock).
+        """
+        super().__init__(block_id)
+        self.planner_soul = planner_soul
+        self.runner = runner
+
+    async def execute(self, state: WorkflowState) -> WorkflowState:
+        """
+        Generate alternative execution plan based on current context.
+
+        Args:
+            state: Must have state.current_task set. Optionally reads failure context from shared_memory.
+
+        Returns:
+            New state with:
+            - results[block_id] = text plan from LLM
+            - metadata[f"{block_id}_new_steps"] = List[Dict[str, str]] with keys: step_id, description
+            - messages appended with replanner summary
+
+        Raises:
+            ValueError: If state.current_task is None.
+        """
+        # Step 1: Validate current_task
+        if state.current_task is None:
+            raise ValueError(f"ReplannerBlock {self.block_id}: state.current_task is None")
+
+        # Step 2: Gather context (current task + any failure info in shared_memory)
+        context_parts = [f"Original Goal: {state.current_task.instruction}"]
+
+        # Check for common failure context keys
+        if f"{self.block_id}_previous_errors" in state.shared_memory:
+            context_parts.append(
+                f"Previous Errors:\n{state.shared_memory[f'{self.block_id}_previous_errors']}"
+            )
+
+        combined_context = "\n\n".join(context_parts)
+
+        # Step 3: Construct planning task
+        planning_instruction = f"""You are a workflow planner. Given the context below, create a detailed execution plan.
+
+{combined_context}
+
+Provide your plan as a numbered list where each step follows this format:
+<step_number>. <step_id>: <description>
+
+Example:
+1. research_phase: Gather requirements and analyze constraints
+2. design_phase: Create technical architecture
+3. implementation_phase: Implement core features
+
+Your plan:"""
+
+        planning_task = Task(id=f"{self.block_id}_planning", instruction=planning_instruction)
+
+        # Step 4: Execute planning task
+        result = await self.runner.execute_task(planning_task, self.planner_soul)
+        text_plan = result.output
+
+        # Step 5: Parse plan to extract structured steps
+        # Regex pattern: ^\d+\.\s+([^:]+):\s+(.+)$
+        # Matches: "1. step_id: description"
+        step_pattern = re.compile(r"^\d+\.\s+([^:]+):\s+(.+)$", re.MULTILINE)
+        matches = step_pattern.findall(text_plan)
+
+        structured_steps: List[Dict[str, str]] = []
+        if matches:
+            # Successfully parsed structured format
+            for step_id, description in matches:
+                structured_steps.append(
+                    {"step_id": step_id.strip(), "description": description.strip()}
+                )
+        else:
+            # Fallback: LLM didn't follow format, create single generic step
+            structured_steps = [
+                {
+                    "step_id": "replanned_execution",
+                    "description": text_plan[:200] + "..." if len(text_plan) > 200 else text_plan,
+                }
+            ]
+
+        # Step 6: Return updated state
+        return state.model_copy(
+            update={
+                "results": {**state.results, self.block_id: text_plan},
+                "metadata": {
+                    **state.metadata,
+                    f"{self.block_id}_new_steps": structured_steps,
+                },
+                "messages": state.messages
+                + [
+                    {
+                        "role": "system",
+                        "content": f"[Block {self.block_id}] ReplannerBlock generated {len(structured_steps)} step(s)",
                     }
                 ],
             }
