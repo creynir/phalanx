@@ -42,6 +42,29 @@ class TestOutputDef:
         with pytest.raises(ValidationError):
             OutputDef(type="invalid_type")  # type: ignore
 
+    def test_outputdef_all_valid_literal_types(self):
+        """OutputDef accepts all valid Literal output types: artifact_only and workspace."""
+        # Test artifact_only
+        artifact_output = OutputDef(type="artifact_only")
+        assert artifact_output.type == "artifact_only"
+
+        # Test workspace
+        workspace_output = OutputDef(type="workspace")
+        assert workspace_output.type == "workspace"
+
+    def test_outputdef_config_arbitrary_keys(self):
+        """OutputDef.config accepts arbitrary keys with any values."""
+        output = OutputDef(
+            type="artifact_only",
+            config={"nested": {"key": "value"}, "list": [1, 2, 3], "bool": True, "null": None},
+        )
+        assert output.config == {
+            "nested": {"key": "value"},
+            "list": [1, 2, 3],
+            "bool": True,
+            "null": None,
+        }
+
 
 class TestActionDef:
     """Tests for ActionDef schema model."""
