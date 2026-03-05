@@ -1,6 +1,6 @@
 """
 YAML workflow parser for Phalanx.
-Exports: parse_workflow_yaml, parse_action_yaml, BUILT_IN_SOULS, BLOCK_TYPE_REGISTRY
+Exports: parse_workflow_yaml, parse_action_yaml, parse_task_yaml, BUILT_IN_SOULS, BLOCK_TYPE_REGISTRY
 """
 
 from __future__ import annotations
@@ -422,3 +422,11 @@ def parse_action_yaml(yaml_str_or_dict: Union[str, Dict[str, Any]]) -> Action:
 
 # Backward compatibility alias
 parse_task_yaml = parse_action_yaml
+
+__all__ = [
+    "parse_workflow_yaml",
+    "parse_action_yaml",
+    "parse_task_yaml",
+    "BUILT_IN_SOULS",
+    "BLOCK_TYPE_REGISTRY",
+]

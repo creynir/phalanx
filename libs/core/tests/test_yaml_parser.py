@@ -13,6 +13,7 @@ from pydantic import ValidationError
 from phalanx_core.yaml.parser import (
     parse_workflow_yaml,
     parse_action_yaml,
+    parse_task_yaml,
     BUILT_IN_SOULS,
     BLOCK_TYPE_REGISTRY,
 )
@@ -895,6 +896,27 @@ context: |
         assert task.id == "task_9"
         assert "multiline context" in task.context
         assert "multiple paragraphs" in task.context
+
+
+class TestBackwardCompatibilityAlias:
+    """Tests for parse_task_yaml backward compatibility alias."""
+
+    def test_parse_task_yaml_is_alias_for_parse_action_yaml(self):
+        """parse_task_yaml should be an alias for parse_action_yaml."""
+        assert parse_task_yaml is parse_action_yaml
+
+    def test_parse_task_yaml_works_like_parse_action_yaml(self):
+        """parse_task_yaml should work identically to parse_action_yaml."""
+        yaml_content = """
+id: task_alias_test
+instruction: "Test that the alias works"
+context: "This tests backward compatibility"
+"""
+        task_via_new_name = parse_action_yaml(yaml_content)
+        task_via_old_name = parse_task_yaml(yaml_content)
+        assert task_via_new_name.id == task_via_old_name.id
+        assert task_via_new_name.instruction == task_via_old_name.instruction
+        assert task_via_new_name.context == task_via_old_name.context
 
 
 # This ensures we have at least 8 distinct test functions across all classes
