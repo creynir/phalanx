@@ -33,7 +33,7 @@ hello.py
 .gemini/
 
 # Research, plans, and agent output collector
-# .agora/
+!.agora/
 
 # Pipeline artifacts and worktrees
 .artifacts/
