@@ -17,6 +17,8 @@ dependencies = [
     "rich>=13.0",
     "phalanx-core",
     "mcp>=1.0.0",
+    "fastapi",
+    "uvicorn[standard]",
 ]
 
 [project.optional-dependencies]
