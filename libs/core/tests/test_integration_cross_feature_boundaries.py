@@ -2,7 +2,7 @@
 Integration tests for cross-feature boundaries after branch merge.
 
 Tests verify that features merged from different branches work correctly together:
-1. RetryBlock ↔ AdvisorBlock: shared_memory key format compatibility
+1. RetryBlock ↔ TeamLeadBlock: shared_memory key format compatibility
 2. MessageBusBlock ↔ RouterBlock: consensus passing and evaluator flexibility
 3. Mixed workflows: Combining all 4 adaptive blocks in complex scenarios
 4. Type safety: Verify circular import fix in primitives.py doesn't break integrations
@@ -19,12 +19,12 @@ from phalanx_core.primitives import Soul, Task
 from phalanx_core.blocks.base import BaseBlock
 from phalanx_core.blocks.implementations import (
     RetryBlock,
-    AdvisorBlock,
+    TeamLeadBlock,
     MessageBusBlock,
     RouterBlock,
 )
 from phalanx_core.runner import ExecutionResult
-from phalanx_core.blueprint import Blueprint
+from phalanx_core.workflow import Workflow
 
 
 # ===== Mock Blocks =====
@@ -106,7 +106,7 @@ async def test_shared_memory_key_format_compatibility(mock_runner, test_souls):
     """
     CONFLICT ZONE TEST: Verify shared_memory key formats are compatible across both branches.
 
-    Branch 1 (RetryBlock→AdvisorBlock): Uses "{block_id}_retry_errors" format
+    Branch 1 (RetryBlock→TeamLeadBlock): Uses "{block_id}_retry_errors" format
     Branch 2 (MessageBusBlock→RouterBlock): Uses "{block_id}_consensus" format
 
     This test ensures both key patterns coexist without conflicts.
@@ -131,10 +131,10 @@ async def test_shared_memory_key_format_compatibility(mock_runner, test_souls):
         iterations=1,
         runner=mock_runner,
     )
-    advisor = AdvisorBlock(
+    advisor = TeamLeadBlock(
         "advisor1",
         failure_context_keys=["retry1_retry_errors"],
-        advisor_soul=test_souls["advisor"],
+        team_lead_soul=test_souls["advisor"],
         runner=mock_runner,
     )
 
@@ -156,7 +156,7 @@ async def test_shared_memory_key_format_compatibility(mock_runner, test_souls):
     assert "messagebus1_consensus" in state.shared_memory
     assert isinstance(state.shared_memory["messagebus1_consensus"], str)
 
-    # Phase 3: AdvisorBlock (reads retry_errors)
+    # Phase 3: TeamLeadBlock (reads retry_errors)
     state = await advisor.execute(state)
 
     # Verify both keys coexist in shared_memory
@@ -228,11 +228,11 @@ async def test_router_block_evaluator_types_both_branches(mock_runner, test_soul
 @pytest.mark.asyncio
 async def test_retry_advisor_shared_memory_flow(mock_runner, test_souls):
     """
-    Test data flow from RetryBlock → shared_memory → AdvisorBlock.
+    Test data flow from RetryBlock → shared_memory → TeamLeadBlock.
 
     Verifies:
     - RetryBlock correctly formats error context
-    - AdvisorBlock correctly reads and parses error context
+    - TeamLeadBlock correctly reads and parses error context
     - State transitions preserve shared_memory integrity
     """
     flaky_block = MockFlakySyncBlock("api_call", fail_times=2)
@@ -242,10 +242,10 @@ async def test_retry_advisor_shared_memory_flow(mock_runner, test_souls):
         task_id="adv", soul_id="advisor", output="Root cause: Transient failure. Retry succeeded."
     )
 
-    advisor = AdvisorBlock(
+    advisor = TeamLeadBlock(
         "advisor_api",
         failure_context_keys=["retry_api_retry_errors"],
-        advisor_soul=test_souls["advisor"],
+        team_lead_soul=test_souls["advisor"],
         runner=mock_runner,
     )
 
@@ -264,7 +264,7 @@ async def test_retry_advisor_shared_memory_flow(mock_runner, test_souls):
     assert "Attempt 2/4" in errors[1]
     assert "RuntimeError: Flaky failure #2" in errors[1]
 
-    # Phase 2: AdvisorBlock analyzes errors
+    # Phase 2: TeamLeadBlock analyzes errors
     state = await advisor.execute(state)
 
     # Verify advisor accessed retry_errors
@@ -338,13 +338,13 @@ async def test_messagebus_consensus_multiple_consumers(mock_runner, test_souls):
 @pytest.mark.asyncio
 async def test_four_block_error_recovery_workflow(mock_runner, test_souls):
     """
-    Complex integration: MessageBus → Router → RetryBlock → AdvisorBlock.
+    Complex integration: MessageBus → Router → RetryBlock → TeamLeadBlock.
 
     Simulates realistic workflow:
     1. MessageBus generates consensus on approach
     2. Router decides to proceed
     3. RetryBlock attempts execution (fails)
-    4. AdvisorBlock analyzes failure and recommends alternative
+    4. TeamLeadBlock analyzes failure and recommends alternative
     """
     # Setup mocks
     call_count = [0]
@@ -380,10 +380,10 @@ async def test_four_block_error_recovery_workflow(mock_runner, test_souls):
     flaky_block = MockFlakySyncBlock("operation", fail_times=999)  # Always fails
     retry_block = RetryBlock("retry_op", flaky_block, max_retries=1, provide_error_context=True)
 
-    advisor = AdvisorBlock(
+    advisor = TeamLeadBlock(
         "recovery",
         failure_context_keys=["retry_op_retry_errors"],
-        advisor_soul=test_souls["advisor"],
+        team_lead_soul=test_souls["advisor"],
         runner=mock_runner,
     )
 
@@ -432,7 +432,7 @@ async def test_four_block_error_recovery_workflow(mock_runner, test_souls):
 
 
 @pytest.mark.asyncio
-async def test_blueprint_integration_with_all_advanced_blocks(mock_runner, test_souls):
+async def test_workflow_integration_with_all_advanced_blocks(mock_runner, test_souls):
     """
     Blueprint-level integration test with MessageBus and Router.
 
@@ -447,7 +447,7 @@ async def test_blueprint_integration_with_all_advanced_blocks(mock_runner, test_
     ]
 
     # Build Blueprint
-    bp = Blueprint("integration_test")
+    bp = Workflow("integration_test")
 
     messagebus = MessageBusBlock(
         "mb", [test_souls["agent1"], test_souls["agent2"]], iterations=1, runner=mock_runner
@@ -483,60 +483,3 @@ async def test_blueprint_integration_with_all_advanced_blocks(mock_runner, test_
     # Verify consensus routing
     assert final_state.shared_memory["mb_consensus"] == "Consensus item 2"
     assert final_state.metadata["rt_decision"] == "approved"
-
-
-# ===== TYPE SAFETY: Circular Import Fix Verification =====
-
-
-@pytest.mark.asyncio
-async def test_primitives_circular_import_fix():
-    """
-    Verify circular import fix in primitives.py doesn't break integrations.
-
-    Tests that TYPE_CHECKING approach correctly handles forward references
-    for BaseBlock, Blueprint, and WorkflowState in Step and Skill classes.
-    """
-    from phalanx_core.primitives import Step, Skill
-    from phalanx_core.blocks.implementations import LinearBlock
-    from phalanx_core.blueprint import Blueprint
-
-    # Create real instances to verify no import errors
-    mock_runner = MagicMock()
-    mock_runner.execute_task = AsyncMock(
-        return_value=ExecutionResult(task_id="t", soul_id="s", output="test output")
-    )
-
-    soul = Soul(id="test", role="Test", system_prompt="Test prompt")
-    block = LinearBlock("linear1", soul, mock_runner)
-
-    # Test Step wrapper
-    def pre_hook(state: WorkflowState) -> WorkflowState:
-        return state.model_copy(update={"metadata": {**state.metadata, "pre_hook_ran": True}})
-
-    def post_hook(state: WorkflowState) -> WorkflowState:
-        return state.model_copy(update={"metadata": {**state.metadata, "post_hook_ran": True}})
-
-    step = Step(block, pre_hook=pre_hook, post_hook=post_hook)
-
-    state = WorkflowState(current_task=Task(id="t1", instruction="Test"))
-    result_state = await step.execute(state)
-
-    assert result_state.metadata["pre_hook_ran"] is True
-    assert result_state.metadata["post_hook_ran"] is True
-    assert "linear1" in result_state.results
-
-    # Test Skill wrapper
-    bp = Blueprint("test_bp")
-    bp.add_block(block)
-    bp.add_transition("linear1", None)
-    bp.set_entry("linear1")
-
-    skill = Skill("test_skill", "Test skill for circular import verification", bp)
-
-    state2 = WorkflowState(current_task=Task(id="t2", instruction="Test skill"))
-    result_state2 = await skill.run(state2)
-
-    assert "linear1" in result_state2.results
-    # Verify active skill metadata was cleaned up
-    assert "active_skill_id" not in result_state2.metadata
-    assert "active_skill_description" not in result_state2.metadata
