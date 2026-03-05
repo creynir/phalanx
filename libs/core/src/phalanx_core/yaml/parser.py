@@ -25,9 +25,9 @@ from phalanx_core.primitives import Soul, Action
 from phalanx_core.runner import PhalanxTeamRunner
 from phalanx_core.workflow import Workflow
 from phalanx_core.yaml.schema import (
+    ActionDef,
     BlockDef,
     PhalanxWorkflowFile,
-    TaskDef,
 )
 
 
@@ -391,7 +391,7 @@ def parse_task_yaml(yaml_str_or_dict: Union[str, Dict[str, Any]]) -> Action:
         Validated Action instance with id, instruction, and optional context populated.
 
     Raises:
-        ValidationError: If input doesn't match TaskDef schema (missing required fields, wrong types).
+        ValidationError: If input doesn't match ActionDef schema (missing required fields, wrong types).
         FileNotFoundError: If file path provided but file does not exist.
         yaml.YAMLError: If YAML content is syntactically invalid.
     """
@@ -410,11 +410,11 @@ def parse_task_yaml(yaml_str_or_dict: Union[str, Dict[str, Any]]) -> Action:
         raw = yaml_str_or_dict
 
     # Step 2: Validate against Pydantic schema (raises ValidationError on failure)
-    task_def = TaskDef.model_validate(raw)
+    action_def = ActionDef.model_validate(raw)
 
     # Step 3: Create and return Action primitive
     return Action(
-        id=task_def.id,
-        instruction=task_def.instruction,
-        context=task_def.context,
+        id=action_def.id,
+        instruction=action_def.instruction,
+        context=action_def.context,
     )

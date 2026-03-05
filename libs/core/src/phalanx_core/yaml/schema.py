@@ -3,7 +3,7 @@ Pydantic schema models for Phalanx YAML workflow files.
 No imports from phalanx_core — pure data definition layer.
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -16,12 +16,20 @@ class SoulDef(BaseModel):
     tools: Optional[List[Dict[str, Any]]] = None
 
 
-class TaskDef(BaseModel):
-    """Task definition as expressed in the YAML tasks: section."""
+class OutputDef(BaseModel):
+    """Output definition for an action."""
+
+    type: Literal["artifact_only", "workspace"] = "artifact_only"
+    config: Dict[str, Any] = Field(default_factory=dict)
+
+
+class ActionDef(BaseModel):
+    """Action definition as expressed in the YAML actions: section."""
 
     id: str
     instruction: str
     context: Optional[str] = None
+    output: OutputDef = Field(default_factory=lambda: OutputDef())
 
 
 class BlockDef(BaseModel):
