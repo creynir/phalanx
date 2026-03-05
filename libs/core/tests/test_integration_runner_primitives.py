@@ -8,7 +8,7 @@ ensuring proper data flow and transformation.
 import pytest
 from unittest.mock import patch
 
-from phalanx_core.primitives import Soul, Task
+from phalanx_core.primitives import Soul, Action
 from phalanx_core.runner import PhalanxTeamRunner, ExecutionResult
 
 
@@ -29,7 +29,7 @@ def integration_soul():
 @pytest.fixture
 def integration_task_with_context():
     """Task with both instruction and context for integration testing."""
-    return Task(
+    return Action(
         id="integration_task_001",
         instruction="Analyze the system integration points",
         context="This is a comprehensive integration test. Consider all subsystems and their interactions.",
@@ -39,7 +39,7 @@ def integration_task_with_context():
 @pytest.fixture
 def integration_task_without_context():
     """Task with only instruction (no context) for integration testing."""
-    return Task(id="integration_task_002", instruction="Perform a simple integration check")
+    return Action(id="integration_task_002", instruction="Perform a simple integration check")
 
 
 @pytest.mark.asyncio
@@ -203,9 +203,9 @@ async def test_multiple_tasks_with_same_soul(mock_achat, integration_soul):
 
     Tests that a Soul instance can be reused across multiple task executions.
     """
-    task1 = Task(id="task1", instruction="First task")
-    task2 = Task(id="task2", instruction="Second task", context="With context")
-    task3 = Task(id="task3", instruction="Third task")
+    task1 = Action(id="task1", instruction="First task")
+    task2 = Action(id="task2", instruction="Second task", context="With context")
+    task3 = Action(id="task3", instruction="Third task")
 
     mock_achat.side_effect = [
         {"content": "Result 1", "cost_usd": 0.1, "total_tokens": 100},
@@ -302,7 +302,7 @@ async def test_empty_task_context_edge_case(mock_achat, integration_soul):
 
     Edge case: Task.context = "" (empty string, not None)
     """
-    task_with_empty_context = Task(
+    task_with_empty_context = Action(
         id="edge_task",
         instruction="Test instruction",
         context="",  # Empty string

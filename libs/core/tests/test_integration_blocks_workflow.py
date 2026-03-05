@@ -11,7 +11,7 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock
 
 from phalanx_core.state import WorkflowState
-from phalanx_core.primitives import Soul, Task
+from phalanx_core.primitives import Soul, Action
 from phalanx_core.runner import ExecutionResult
 from phalanx_core.blocks.implementations import (
     LinearBlock,
@@ -94,8 +94,8 @@ async def test_blocks_share_state_correctly(mock_runner, sample_souls):
     ]
 
     # Create initial state
-    task = Task(id="t1", instruction="Research AI safety")
-    state = WorkflowState(current_task=task)
+    task = Action(id="t1", instruction="Research AI safety")
+    state = WorkflowState(current_action=task)
 
     # Execute LinearBlock
     linear = LinearBlock("research", sample_souls["researcher"], mock_runner)
@@ -104,7 +104,9 @@ async def test_blocks_share_state_correctly(mock_runner, sample_souls):
     assert state.results["research"] == "Research complete"
 
     # Update task and execute FanOutBlock
-    state = state.model_copy(update={"current_task": Task(id="t2", instruction="Review research")})
+    state = state.model_copy(
+        update={"current_action": Action(id="t2", instruction="Review research")}
+    )
     fanout = FanOutBlock(
         "reviews", [sample_souls["reviewer1"], sample_souls["reviewer2"]], mock_runner
     )
@@ -158,7 +160,7 @@ async def test_workflow_linear_to_fanout_workflow(mock_runner, sample_souls):
     assert errors == [], f"Workflow validation failed: {errors}"
 
     # Execute
-    initial_state = WorkflowState(current_task=Task(id="task1", instruction="Research AI"))
+    initial_state = WorkflowState(current_action=Action(id="task1", instruction="Research AI"))
     final_state = await wf.run(initial_state)
 
     # Verify both blocks executed
@@ -205,7 +207,7 @@ async def test_workflow_fanout_to_synthesize_workflow(mock_runner, sample_souls)
     wf.set_entry("fanout")
 
     # Execute
-    initial_state = WorkflowState(current_task=Task(id="t1", instruction="Review proposal"))
+    initial_state = WorkflowState(current_action=Action(id="t1", instruction="Review proposal"))
     final_state = await wf.run(initial_state)
 
     # Verify SynthesizeBlock received FanOut output
@@ -247,7 +249,7 @@ async def test_workflow_debate_stores_conclusion_in_shared_memory(mock_runner, s
 
     # Execute
     initial_state = WorkflowState(
-        current_task=Task(id="main", instruction="Should we adopt microservices?")
+        current_action=Action(id="main", instruction="Should we adopt microservices?")
     )
     final_state = await wf.run(initial_state)
 
@@ -312,7 +314,7 @@ async def test_workflow_synthesize_with_multiple_block_types(mock_runner, sample
     wf.set_entry("research")
 
     # Execute
-    initial_state = WorkflowState(current_task=Task(id="t1", instruction="Analyze topic"))
+    initial_state = WorkflowState(current_action=Action(id="t1", instruction="Analyze topic"))
     final_state = await wf.run(initial_state)
 
     # Verify all 4 blocks produced results
@@ -393,7 +395,7 @@ async def test_complete_research_review_synthesis_workflow(mock_runner, sample_s
 
     # Execute
     initial_state = WorkflowState(
-        current_task=Task(
+        current_action=Action(
             id="main_task", instruction="Research AI safety and compile comprehensive report"
         ),
         metadata={"workflow_type": "research_pipeline"},
@@ -439,7 +441,7 @@ async def test_state_immutability_across_workflow_execution(mock_runner, sample_
 
     # Execute and capture states
     initial_state = WorkflowState(
-        current_task=Task(id="t1", instruction="Test"), results={"initial": "value"}
+        current_action=Action(id="t1", instruction="Test"), results={"initial": "value"}
     )
 
     # Store initial state ID
@@ -484,7 +486,7 @@ async def test_error_propagation_through_workflow(mock_runner, sample_souls):
     wf.add_transition("b1", "b2").add_transition("b2", None)
     wf.set_entry("b1")
 
-    initial_state = WorkflowState(current_task=Task(id="t1", instruction="Test"))
+    initial_state = WorkflowState(current_action=Action(id="t1", instruction="Test"))
 
     # Verify exception propagates
     with pytest.raises(Exception, match="Simulated execution failure"):

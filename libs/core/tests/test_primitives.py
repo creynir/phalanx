@@ -1,6 +1,6 @@
 import pytest
 from pydantic import ValidationError
-from phalanx_core.primitives import Soul, Task
+from phalanx_core.primitives import Soul, Action
 
 
 def test_soul_validation():
@@ -14,11 +14,11 @@ def test_soul_validation():
         Soul(role="Coder", system_prompt="Missing id")
 
 
-def test_task_validation():
-    task = Task(id="task1", instruction="Do work")
-    assert task.id == "task1"
-    assert task.instruction == "Do work"
-    assert task.context is None
+def test_action_validation():
+    action = Action(id="task1", instruction="Do work")
+    assert action.id == "task1"
+    assert action.instruction == "Do work"
+    assert action.context is None
 
-    task_with_context = Task(id="task2", instruction="Do work", context="Context here")
-    assert task_with_context.context == "Context here"
+    action_with_context = Action(id="task2", instruction="Do work", context="Context here")
+    assert action_with_context.context == "Context here"

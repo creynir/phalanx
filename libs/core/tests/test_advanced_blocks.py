@@ -7,7 +7,7 @@ import json
 from unittest.mock import AsyncMock, MagicMock
 
 from phalanx_core.state import WorkflowState
-from phalanx_core.primitives import Soul, Task
+from phalanx_core.primitives import Soul, Action
 from phalanx_core.blocks.base import BaseBlock
 from phalanx_core.blocks.implementations import (
     RetryBlock,
@@ -100,8 +100,8 @@ async def test_retry_block_success_after_failure():
     inner_block = MockFailingBlock("inner1", fail_count=2)
     retry_block = RetryBlock("retry1", inner_block, max_retries=3, provide_error_context=False)
 
-    task = Task(id="t1", instruction="Test task")
-    state = WorkflowState(current_task=task)
+    task = Action(id="t1", instruction="Test task")
+    state = WorkflowState(current_action=task)
 
     # Execute - should succeed on 3rd attempt
     result_state = await retry_block.execute(state)
@@ -126,8 +126,8 @@ async def test_retry_block_exhausts_retries():
     inner_block = MockAlwaysFailingBlock("inner2")
     retry_block = RetryBlock("retry2", inner_block, max_retries=2, provide_error_context=False)
 
-    task = Task(id="t2", instruction="Test task")
-    state = WorkflowState(current_task=task)
+    task = Action(id="t2", instruction="Test task")
+    state = WorkflowState(current_action=task)
 
     # Execute - should raise after 3 attempts (1 initial + 2 retries)
     with pytest.raises(RuntimeError, match="Always fails"):
@@ -146,8 +146,8 @@ async def test_retry_block_error_context():
     inner_block = MockFailingBlock("inner3", fail_count=2)
     retry_block = RetryBlock("retry3", inner_block, max_retries=3, provide_error_context=True)
 
-    task = Task(id="t3", instruction="Test task")
-    state = WorkflowState(current_task=task)
+    task = Action(id="t3", instruction="Test task")
+    state = WorkflowState(current_action=task)
 
     # Execute - should succeed on 3rd attempt
     result_state = await retry_block.execute(state)
@@ -171,8 +171,8 @@ async def test_retry_block_error_context_on_exhaustion():
     inner_block = MockAlwaysFailingBlock("inner4")
     retry_block = RetryBlock("retry4", inner_block, max_retries=2, provide_error_context=True)
 
-    task = Task(id="t4", instruction="Test task")
-    state = WorkflowState(current_task=task)
+    task = Action(id="t4", instruction="Test task")
+    state = WorkflowState(current_action=task)
 
     # Execute - should raise after 3 attempts
     with pytest.raises(RuntimeError, match="Always fails"):
@@ -205,8 +205,8 @@ async def test_retry_block_no_failures():
     inner_block = MockFailingBlock("inner6", fail_count=0)  # Never fails
     retry_block = RetryBlock("retry6", inner_block, max_retries=3, provide_error_context=True)
 
-    task = Task(id="t6", instruction="Test task")
-    state = WorkflowState(current_task=task)
+    task = Action(id="t6", instruction="Test task")
+    state = WorkflowState(current_action=task)
 
     # Execute - should succeed on 1st attempt
     result_state = await retry_block.execute(state)
@@ -231,9 +231,9 @@ async def test_retry_block_preserves_state():
     inner_block = MockFailingBlock("inner7", fail_count=1)  # Fails once, succeeds second time
     retry_block = RetryBlock("retry7", inner_block, max_retries=3, provide_error_context=False)
 
-    task = Task(id="t7", instruction="Test task")
+    task = Action(id="t7", instruction="Test task")
     state = WorkflowState(
-        current_task=task,
+        current_action=task,
         results={"previous_block": "Previous output"},
         messages=[{"role": "system", "content": "Previous message"}],
         shared_memory={"existing_key": "existing_value"},
@@ -266,8 +266,8 @@ async def test_router_block_soul_evaluation(mock_runner, sample_soul):
 
     # Create RouterBlock with Soul evaluator
     block = RouterBlock("router1", sample_soul, mock_runner)
-    task = Task(id="decision_task", instruction="Should we proceed with this plan?")
-    state = WorkflowState(current_task=task)
+    task = Action(id="decision_task", instruction="Should we proceed with this plan?")
+    state = WorkflowState(current_action=task)
 
     # Execute
     result_state = await block.execute(state)
@@ -354,10 +354,10 @@ async def test_router_block_soul_requires_current_task(mock_runner, sample_soul)
     AC: RouterBlock validates current_task not None when using Soul evaluator during execute().
     """
     block = RouterBlock("router4", sample_soul, mock_runner)
-    state = WorkflowState(current_task=None)
+    state = WorkflowState(current_action=None)
 
     with pytest.raises(
-        ValueError, match="state.current_task is None \\(required for Soul evaluator\\)"
+        ValueError, match="state.current_action is None \\(required for Soul evaluator\\)"
     ):
         await block.execute(state)
 
@@ -373,8 +373,8 @@ async def test_router_block_soul_strips_whitespace(mock_runner, sample_soul):
     )
 
     block = RouterBlock("router5", sample_soul, mock_runner)
-    task = Task(id="task", instruction="Evaluate this")
-    state = WorkflowState(current_task=task)
+    task = Action(id="task", instruction="Evaluate this")
+    state = WorkflowState(current_action=task)
 
     result_state = await block.execute(state)
 
@@ -607,8 +607,8 @@ async def test_engineering_manager_generates_new_steps(mock_runner, planner_soul
     )
 
     block = EngineeringManagerBlock("replanner1", planner_soul, mock_runner)
-    task = Task(id="main", instruction="Build authentication system")
-    state = WorkflowState(current_task=task)
+    task = Action(id="main", instruction="Build authentication system")
+    state = WorkflowState(current_action=task)
 
     result_state = await block.execute(state)
 
@@ -644,10 +644,10 @@ async def test_engineering_manager_generates_new_steps(mock_runner, planner_soul
 async def test_engineering_manager_validates_current_task(mock_runner, planner_soul):
     """AC2: EngineeringManagerBlock validates current_task is not None during execute()."""
     block = EngineeringManagerBlock("replanner1", planner_soul, mock_runner)
-    state = WorkflowState(current_task=None)
+    state = WorkflowState(current_action=None)
 
     with pytest.raises(
-        ValueError, match="EngineeringManagerBlock replanner1: state.current_task is None"
+        ValueError, match="EngineeringManagerBlock replanner1: state.current_action is None"
     ):
         await block.execute(state)
 
@@ -665,8 +665,8 @@ async def test_engineering_manager_regex_pattern_parsing(mock_runner, planner_so
     )
 
     block = EngineeringManagerBlock("replanner1", planner_soul, mock_runner)
-    task = Task(id="test", instruction="Test task")
-    state = WorkflowState(current_task=task)
+    task = Action(id="test", instruction="Test task")
+    state = WorkflowState(current_action=task)
 
     result_state = await block.execute(state)
 
@@ -694,8 +694,8 @@ async def test_engineering_manager_fallback_creates_generic_step(mock_runner, pl
     )
 
     block = EngineeringManagerBlock("replanner1", planner_soul, mock_runner)
-    task = Task(id="test", instruction="Test task")
-    state = WorkflowState(current_task=task)
+    task = Action(id="test", instruction="Test task")
+    state = WorkflowState(current_action=task)
 
     result_state = await block.execute(state)
 
@@ -717,8 +717,8 @@ async def test_engineering_manager_fallback_truncates_at_200_chars(mock_runner, 
     )
 
     block = EngineeringManagerBlock("replanner1", planner_soul, mock_runner)
-    task = Task(id="test", instruction="Test task")
-    state = WorkflowState(current_task=task)
+    task = Action(id="test", instruction="Test task")
+    state = WorkflowState(current_action=task)
 
     result_state = await block.execute(state)
 
@@ -743,8 +743,8 @@ async def test_engineering_manager_regex_with_whitespace_variations(mock_runner,
     )
 
     block = EngineeringManagerBlock("replanner1", planner_soul, mock_runner)
-    task = Task(id="test", instruction="Test task")
-    state = WorkflowState(current_task=task)
+    task = Action(id="test", instruction="Test task")
+    state = WorkflowState(current_action=task)
 
     result_state = await block.execute(state)
 
@@ -771,9 +771,9 @@ async def test_engineering_manager_preserves_existing_results_and_metadata(
     )
 
     block = EngineeringManagerBlock("replanner1", planner_soul, mock_runner)
-    task = Task(id="test", instruction="Test task")
+    task = Action(id="test", instruction="Test task")
     state = WorkflowState(
-        current_task=task,
+        current_action=task,
         results={"previous_block": "Previous result"},
         metadata={"existing_key": "existing_value"},
     )
@@ -801,9 +801,9 @@ async def test_engineering_manager_reads_previous_errors_from_shared_memory(
     )
 
     block = EngineeringManagerBlock("replanner1", planner_soul, mock_runner)
-    task = Task(id="test", instruction="Build feature")
+    task = Action(id="test", instruction="Build feature")
     state = WorkflowState(
-        current_task=task,
+        current_action=task,
         shared_memory={"replanner1_previous_errors": "Error: Connection timeout"},
     )
 
@@ -830,8 +830,8 @@ async def test_engineering_manager_multiline_descriptions(mock_runner, planner_s
     )
 
     block = EngineeringManagerBlock("replanner1", planner_soul, mock_runner)
-    task = Task(id="test", instruction="Test")
-    state = WorkflowState(current_task=task)
+    task = Action(id="test", instruction="Test")
+    state = WorkflowState(current_action=task)
 
     result_state = await block.execute(state)
 
@@ -874,8 +874,8 @@ async def test_messagebus_n_agents(mock_runner, sample_souls):
 
     # Create MessageBusBlock with 4 agents and 3 iterations
     block = MessageBusBlock("messagebus1", sample_souls, iterations=3, runner=mock_runner)
-    task = Task(id="brainstorm", instruction="Generate ideas for AI safety")
-    state = WorkflowState(current_task=task)
+    task = Action(id="brainstorm", instruction="Generate ideas for AI safety")
+    state = WorkflowState(current_action=task)
 
     # Execute
     result_state = await block.execute(state)
@@ -913,7 +913,7 @@ async def test_messagebus_n_agents(mock_runner, sample_souls):
 
 @pytest.mark.asyncio
 async def test_messagebus_validation(mock_runner, sample_souls):
-    """AC-2: ValueError for empty souls list, iterations < 1, or current_task=None."""
+    """AC-2: ValueError for empty souls list, iterations < 1, or current_action=None."""
     # Test empty souls list
     with pytest.raises(ValueError, match="souls list cannot be empty"):
         MessageBusBlock("messagebus1", [], iterations=3, runner=mock_runner)
@@ -922,11 +922,11 @@ async def test_messagebus_validation(mock_runner, sample_souls):
     with pytest.raises(ValueError, match="iterations must be >= 1, got 0"):
         MessageBusBlock("messagebus1", sample_souls, iterations=0, runner=mock_runner)
 
-    # Test current_task=None
+    # Test current_action=None
     block = MessageBusBlock("messagebus1", sample_souls, iterations=3, runner=mock_runner)
-    state = WorkflowState(current_task=None)
+    state = WorkflowState(current_action=None)
 
-    with pytest.raises(ValueError, match="state.current_task is None"):
+    with pytest.raises(ValueError, match="state.current_action is None"):
         await block.execute(state)
 
 
@@ -947,8 +947,8 @@ async def test_messagebus_context_passing(mock_runner, sample_souls):
     # Use 3 agents, 2 iterations
     souls = sample_souls[:3]
     block = MessageBusBlock("messagebus1", souls, iterations=2, runner=mock_runner)
-    task = Task(id="discussion", instruction="Discuss the topic")
-    state = WorkflowState(current_task=task)
+    task = Action(id="discussion", instruction="Discuss the topic")
+    state = WorkflowState(current_action=task)
 
     await block.execute(state)
 
@@ -994,8 +994,8 @@ async def test_messagebus_transcript_format(mock_runner, sample_souls):
     # Single iteration with 2 agents to simplify
     souls = sample_souls[:2]
     block = MessageBusBlock("messagebus1", souls, iterations=1, runner=mock_runner)
-    task = Task(id="task1", instruction="Test instruction")
-    state = WorkflowState(current_task=task)
+    task = Action(id="task1", instruction="Test instruction")
+    state = WorkflowState(current_action=task)
 
     result_state = await block.execute(state)
 

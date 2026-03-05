@@ -9,7 +9,7 @@ import pytest
 from unittest.mock import patch, AsyncMock, MagicMock
 
 from phalanx_core.state import WorkflowState
-from phalanx_core.primitives import Soul, Task
+from phalanx_core.primitives import Soul, Action
 from phalanx_core.runner import PhalanxTeamRunner
 from phalanx_core.blocks.implementations import LinearBlock
 
@@ -35,7 +35,7 @@ async def test_e2e_single_block_workflow(mock_achat):
         system_prompt="You are a research analyst who finds and summarizes academic papers.",
     )
 
-    task = Task(
+    task = Action(
         id="research_task",
         instruction="Find papers about quantum computing",
         context="Focus on papers published in 2024",
@@ -46,7 +46,7 @@ async def test_e2e_single_block_workflow(mock_achat):
 
     # Initialize state
     initial_state = WorkflowState(
-        current_task=task,
+        current_action=task,
         metadata={"workflow_name": "research_pipeline", "started_at": "2024-01-01T00:00:00"},
     )
 
@@ -89,9 +89,9 @@ async def test_e2e_sequential_block_workflow(mock_achat):
     analyst_soul = Soul(id="analyst", role="Analyst", system_prompt="Analyze data.")
     writer_soul = Soul(id="writer", role="Writer", system_prompt="Write reports.")
 
-    research_task = Task(id="task1", instruction="Research topic")
-    analysis_task = Task(id="task2", instruction="Analyze findings")
-    writing_task = Task(id="task3", instruction="Write summary")
+    research_task = Action(id="task1", instruction="Research topic")
+    analysis_task = Action(id="task2", instruction="Analyze findings")
+    writing_task = Action(id="task3", instruction="Write summary")
 
     # Mock LLM responses for each step
     mock_achat.side_effect = [
@@ -120,17 +120,17 @@ async def test_e2e_sequential_block_workflow(mock_achat):
     writing_block = LinearBlock("step3_writing", writer_soul, runner)
 
     # Execute sequential workflow
-    state = WorkflowState(current_task=research_task, metadata={"pipeline": "analysis_pipeline"})
+    state = WorkflowState(current_action=research_task, metadata={"pipeline": "analysis_pipeline"})
 
     # Step 1: Research
     state = await research_block.execute(state)
 
     # Step 2: Analysis (update task)
-    state = state.model_copy(update={"current_task": analysis_task})
+    state = state.model_copy(update={"current_action": analysis_task})
     state = await analysis_block.execute(state)
 
     # Step 3: Writing (update task)
-    state = state.model_copy(update={"current_task": writing_task})
+    state = state.model_copy(update={"current_action": writing_task})
     state = await writing_block.execute(state)
 
     # Verify complete pipeline execution
@@ -179,7 +179,7 @@ async def test_e2e_shared_memory_across_blocks(mock_achat):
 
     # Initial state with shared memory
     state = WorkflowState(
-        current_task=Task(id="t1", instruction="Task 1"),
+        current_action=Action(id="t1", instruction="Task 1"),
         shared_memory={"config": {"max_items": 100, "timeout": 30}},
     )
 
@@ -191,7 +191,7 @@ async def test_e2e_shared_memory_across_blocks(mock_achat):
     state = state.model_copy(
         update={
             "shared_memory": updated_memory,
-            "current_task": Task(id="t2", instruction="Task 2"),
+            "current_action": Action(id="t2", instruction="Task 2"),
         }
     )
 
@@ -217,8 +217,8 @@ async def test_e2e_error_propagation_through_workflow():
     mock_runner.execute_task = AsyncMock(side_effect=RuntimeError("LLM service unavailable"))
 
     block = LinearBlock("error_block", soul, mock_runner)
-    task = Task(id="t1", instruction="This will fail")
-    state = WorkflowState(current_task=task)
+    task = Action(id="t1", instruction="This will fail")
+    state = WorkflowState(current_action=task)
 
     # Error should propagate from runner through block to caller
     with pytest.raises(RuntimeError, match="LLM service unavailable"):
@@ -244,13 +244,15 @@ async def test_e2e_state_isolation_between_workflows(mock_achat):
 
     # Workflow 1
     state1 = WorkflowState(
-        current_task=Task(id="wf1_task", instruction="Workflow 1"), metadata={"workflow_id": "wf1"}
+        current_action=Action(id="wf1_task", instruction="Workflow 1"),
+        metadata={"workflow_id": "wf1"},
     )
     result1 = await block.execute(state1)
 
     # Workflow 2
     state2 = WorkflowState(
-        current_task=Task(id="wf2_task", instruction="Workflow 2"), metadata={"workflow_id": "wf2"}
+        current_action=Action(id="wf2_task", instruction="Workflow 2"),
+        metadata={"workflow_id": "wf2"},
     )
     result2 = await block.execute(state2)
 
@@ -285,7 +287,7 @@ async def test_e2e_long_running_workflow_state_size(mock_achat):
     runner = PhalanxTeamRunner(model_name="gpt-4o")
 
     # Simulate 10 blocks in sequence
-    state = WorkflowState(current_task=Task(id="t", instruction="Work"))
+    state = WorkflowState(current_action=Action(id="t", instruction="Work"))
 
     for i in range(10):
         block = LinearBlock(f"block{i}", soul, runner)
@@ -293,7 +295,7 @@ async def test_e2e_long_running_workflow_state_size(mock_achat):
         # Update task for next iteration
         if i < 9:
             state = state.model_copy(
-                update={"current_task": Task(id=f"t{i + 1}", instruction="Work")}
+                update={"current_action": Action(id=f"t{i + 1}", instruction="Work")}
             )
 
     # Verify all results stored in full
@@ -328,7 +330,7 @@ async def test_e2e_workflow_with_task_context_utilization(mock_achat):
         id="processor", role="Data Processor", system_prompt="Process data using provided context."
     )
 
-    task = Task(
+    task = Action(
         id="process_task",
         instruction="Process the quarterly data",
         context="Background: Q4 metrics show 30% growth. Focus on key drivers.",
@@ -337,7 +339,7 @@ async def test_e2e_workflow_with_task_context_utilization(mock_achat):
     runner = PhalanxTeamRunner(model_name="gpt-4o")
     block = LinearBlock("processor_block", soul, runner)
 
-    state = WorkflowState(current_task=task)
+    state = WorkflowState(current_action=task)
     result_state = await block.execute(state)
 
     # Verify context made it to LLM

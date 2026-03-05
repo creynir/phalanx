@@ -15,7 +15,7 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock
 
 from phalanx_core.state import WorkflowState
-from phalanx_core.primitives import Soul, Task
+from phalanx_core.primitives import Soul, Action
 from phalanx_core.blocks.base import BaseBlock
 from phalanx_core.blocks.implementations import (
     RetryBlock,
@@ -156,8 +156,8 @@ async def test_retry_advisor_recovery(mock_runner, team_lead_soul):
     # Setup: Create workflow with error handling workflow
     # Note: We manually orchestrate retry -> advisor since Workflow doesn't support
     # exception handling transitions (that would be over-engineering for Phase 1.2)
-    task = Task(id="main_task", instruction="Process API request")
-    state = WorkflowState(current_task=task)
+    task = Action(id="main_task", instruction="Process API request")
+    state = WorkflowState(current_action=task)
 
     # Phase 1: Execute RetryBlock (will exhaust retries and raise exception)
     # First, verify RetryBlock exhausts retries and raises exception
@@ -282,8 +282,8 @@ async def test_retry_advisor_with_workflow_orchestration(mock_runner, team_lead_
     wf.set_entry("retry_api")
 
     # Execute workflow with error handling
-    task = Task(id="api_task", instruction="Call external API")
-    state = WorkflowState(current_task=task)
+    task = Action(id="api_task", instruction="Call external API")
+    state = WorkflowState(current_action=task)
 
     # Try normal path
     try:
@@ -369,8 +369,8 @@ async def test_multiple_retry_errors_analyzed_together(mock_runner, team_lead_so
     )
 
     # Execute both retry blocks (both will fail)
-    task = Task(id="task", instruction="Execute operations")
-    state = WorkflowState(current_task=task)
+    task = Action(id="task", instruction="Execute operations")
+    state = WorkflowState(current_action=task)
 
     try:
         await retry_block1.execute(state)
@@ -445,8 +445,8 @@ async def test_advisor_error_context_format(mock_runner, team_lead_soul):
     )
 
     # Execute retry (will fail)
-    task = Task(id="task", instruction="Test")
-    state = WorkflowState(current_task=task)
+    task = Action(id="task", instruction="Test")
+    state = WorkflowState(current_action=task)
 
     try:
         await retry_block.execute(state)
@@ -545,7 +545,7 @@ async def test_messagebus_router_workflow(mock_runner, sample_souls):
 
     # Execute workflow
     initial_state = WorkflowState(
-        current_task=Task(id="discussion", instruction="Discuss the proposal")
+        current_action=Action(id="discussion", instruction="Discuss the proposal")
     )
     final_state = await wf.run(initial_state)
 
@@ -616,7 +616,7 @@ async def test_retry_advisor_recovery_workflow(mock_runner, sample_souls):
 
     # Execute workflow - RetryBlock will fail and raise exception
     initial_state = WorkflowState(
-        current_task=Task(id="task1", instruction="Attempt risky operation")
+        current_action=Action(id="task1", instruction="Attempt risky operation")
     )
 
     # Since RetryBlock raises after exhausting retries, we need to handle it
@@ -728,7 +728,7 @@ async def test_messagebus_router_with_soul_evaluator(mock_runner, sample_souls):
 
     # Execute
     initial_state = WorkflowState(
-        current_task=Task(id="discussion2", instruction="Evaluate the discussion consensus")
+        current_action=Action(id="discussion2", instruction="Evaluate the discussion consensus")
     )
     final_state = await wf.run(initial_state)
 

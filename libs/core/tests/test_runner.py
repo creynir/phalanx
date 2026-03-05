@@ -1,7 +1,7 @@
 import pytest
 from unittest.mock import patch
 
-from phalanx_core.primitives import Soul, Task
+from phalanx_core.primitives import Soul, Action
 from phalanx_core.runner import PhalanxTeamRunner, ExecutionResult
 
 
@@ -12,7 +12,7 @@ def sample_soul():
 
 @pytest.fixture
 def sample_task():
-    return Task(id="test_task", instruction="Say hello.", context="This is a test context.")
+    return Action(id="test_task", instruction="Say hello.", context="This is a test context.")
 
 
 @pytest.mark.asyncio

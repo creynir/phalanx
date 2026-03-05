@@ -17,7 +17,7 @@ from phalanx_core.yaml.parser import (
     BLOCK_TYPE_REGISTRY,
 )
 from phalanx_core.workflow import Workflow
-from phalanx_core.primitives import Task
+from phalanx_core.primitives import Action
 
 
 class TestBlockTypeRegistry:
@@ -753,7 +753,7 @@ instruction: "Review this code for bugs"
 context: "This is a Python function with a potential off-by-one error"
 """
         task = parse_task_yaml(yaml_content)
-        assert isinstance(task, Task)
+        assert isinstance(task, Action)
         assert task.id == "task_1"
         assert task.instruction == "Review this code for bugs"
         assert task.context == "This is a Python function with a potential off-by-one error"
@@ -765,7 +765,7 @@ id: task_2
 instruction: "Summarize the main points"
 """
         task = parse_task_yaml(yaml_content)
-        assert isinstance(task, Task)
+        assert isinstance(task, Action)
         assert task.id == "task_2"
         assert task.instruction == "Summarize the main points"
         assert task.context is None
@@ -778,7 +778,7 @@ instruction: "Summarize the main points"
             "context": "Test coverage should be at least 80%",
         }
         task = parse_task_yaml(task_dict)
-        assert isinstance(task, Task)
+        assert isinstance(task, Action)
         assert task.id == "task_3"
         assert task.instruction == "Write unit tests"
         assert task.context == "Test coverage should be at least 80%"
@@ -790,7 +790,7 @@ instruction: "Summarize the main points"
             "instruction": "Generate API documentation",
         }
         task = parse_task_yaml(task_dict)
-        assert isinstance(task, Task)
+        assert isinstance(task, Action)
         assert task.id == "task_4"
         assert task.instruction == "Generate API documentation"
         assert task.context is None
@@ -860,7 +860,7 @@ id: task_7
 instruction: "Test instruction"
 """
         result = parse_task_yaml(yaml_content)
-        assert isinstance(result, Task)
+        assert isinstance(result, Action)
         assert hasattr(result, "id")
         assert hasattr(result, "instruction")
         assert hasattr(result, "context")

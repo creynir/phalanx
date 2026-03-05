@@ -15,7 +15,7 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock
 
 from phalanx_core.state import WorkflowState
-from phalanx_core.primitives import Soul, Task
+from phalanx_core.primitives import Soul, Action
 from phalanx_core.blocks.base import BaseBlock
 from phalanx_core.blocks.implementations import (
     RetryBlock,
@@ -139,7 +139,7 @@ async def test_shared_memory_key_format_compatibility(mock_runner, test_souls):
     )
 
     # Execute both workflows
-    state = WorkflowState(current_task=Task(id="task1", instruction="Execute operations"))
+    state = WorkflowState(current_action=Action(id="task1", instruction="Execute operations"))
 
     # Phase 1: RetryBlock (succeeds after 1 failure, stores retry_errors)
     state = await retry_block.execute(state)
@@ -204,7 +204,7 @@ async def test_router_block_evaluator_types_both_branches(mock_runner, test_soul
     router_soul = RouterBlock("router_soul", test_souls["router"], runner=mock_runner)
 
     # Execute workflow
-    state = WorkflowState(current_task=Task(id="task2", instruction="Make decision"))
+    state = WorkflowState(current_action=Action(id="task2", instruction="Make decision"))
     state = await messagebus.execute(state)
 
     # Verify callable evaluator works
@@ -250,7 +250,7 @@ async def test_retry_advisor_shared_memory_flow(mock_runner, test_souls):
     )
 
     # Execute workflow
-    state = WorkflowState(current_task=Task(id="task3", instruction="Call API"))
+    state = WorkflowState(current_action=Action(id="task3", instruction="Call API"))
 
     # Phase 1: RetryBlock succeeds after 2 failures
     state = await retry_block.execute(state)
@@ -312,7 +312,7 @@ async def test_messagebus_consensus_multiple_consumers(mock_runner, test_souls):
     analyzer = MockConsensusAnalyzerBlock("analyzer3", "messagebus3")
 
     # Execute workflow
-    state = WorkflowState(current_task=Task(id="task4", instruction="Discuss proposal"))
+    state = WorkflowState(current_action=Action(id="task4", instruction="Discuss proposal"))
     state = await messagebus.execute(state)
 
     # Both consumers should access same consensus
@@ -388,7 +388,7 @@ async def test_four_block_error_recovery_workflow(mock_runner, test_souls):
     )
 
     # Execute phases
-    state = WorkflowState(current_task=Task(id="task5", instruction="Execute complex workflow"))
+    state = WorkflowState(current_action=Action(id="task5", instruction="Execute complex workflow"))
 
     # Phase 1: Consensus
     state = await messagebus.execute(state)
@@ -467,7 +467,7 @@ async def test_workflow_integration_with_all_advanced_blocks(mock_runner, test_s
     errors = wf.validate()
     assert errors == [], f"Workflow validation failed: {errors}"
 
-    initial_state = WorkflowState(current_task=Task(id="task6", instruction="Run integration"))
+    initial_state = WorkflowState(current_action=Action(id="task6", instruction="Run integration"))
     final_state = await wf.run(initial_state)
 
     # Verify execution order and results

@@ -7,7 +7,7 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock
 
 from phalanx_core.state import WorkflowState
-from phalanx_core.primitives import Soul, Task
+from phalanx_core.primitives import Soul, Action
 from phalanx_core.runner import ExecutionResult
 from phalanx_core.blocks.implementations import (
     LinearBlock,
@@ -39,8 +39,8 @@ async def test_linear_block_execution(mock_runner, sample_soul):
     )
 
     block = LinearBlock("linear1", sample_soul, mock_runner)
-    task = Task(id="t1", instruction="Test task")
-    state = WorkflowState(current_task=task)
+    task = Action(id="t1", instruction="Test task")
+    state = WorkflowState(current_action=task)
 
     result_state = await block.execute(state)
 
@@ -53,11 +53,11 @@ async def test_linear_block_execution(mock_runner, sample_soul):
 
 @pytest.mark.asyncio
 async def test_linear_block_none_task(mock_runner, sample_soul):
-    """LinearBlock raises ValueError if current_task is None."""
+    """LinearBlock raises ValueError if current_action is None."""
     block = LinearBlock("linear1", sample_soul, mock_runner)
-    state = WorkflowState(current_task=None)
+    state = WorkflowState(current_action=None)
 
-    with pytest.raises(ValueError, match="current_task is None"):
+    with pytest.raises(ValueError, match="current_action is None"):
         await block.execute(state)
 
 
@@ -72,8 +72,8 @@ async def test_linear_block_message_truncation(mock_runner, sample_soul):
     )
 
     block = LinearBlock("linear1", sample_soul, mock_runner)
-    task = Task(id="t1", instruction="Test task")
-    state = WorkflowState(current_task=task)
+    task = Action(id="t1", instruction="Test task")
+    state = WorkflowState(current_action=task)
 
     result_state = await block.execute(state)
 
@@ -96,8 +96,8 @@ async def test_linear_block_preserves_existing_results(mock_runner, sample_soul)
     )
 
     block = LinearBlock("linear1", sample_soul, mock_runner)
-    task = Task(id="t1", instruction="Test task")
-    state = WorkflowState(current_task=task, results={"previous_block": "Previous output"})
+    task = Action(id="t1", instruction="Test task")
+    state = WorkflowState(current_action=task, results={"previous_block": "Previous output"})
 
     result_state = await block.execute(state)
 
@@ -114,9 +114,9 @@ async def test_linear_block_preserves_existing_messages(mock_runner, sample_soul
     )
 
     block = LinearBlock("linear1", sample_soul, mock_runner)
-    task = Task(id="t1", instruction="Test task")
+    task = Action(id="t1", instruction="Test task")
     existing_messages = [{"role": "system", "content": "Previous message"}]
-    state = WorkflowState(current_task=task, messages=existing_messages)
+    state = WorkflowState(current_action=task, messages=existing_messages)
 
     result_state = await block.execute(state)
 
@@ -142,8 +142,8 @@ async def test_fanout_block_parallel(mock_runner):
     ]
 
     block = FanOutBlock("fanout1", souls, mock_runner)
-    task = Task(id="t1", instruction="Review this")
-    state = WorkflowState(current_task=task)
+    task = Action(id="t1", instruction="Review this")
+    state = WorkflowState(current_action=task)
 
     result_state = await block.execute(state)
 
@@ -218,8 +218,8 @@ async def test_debate_block_iterations(mock_runner):
     ]
 
     block = DebateBlock("debate1", soul_a, soul_b, iterations=2, runner=mock_runner)
-    task = Task(id="t1", instruction="Should we use microservices?")
-    state = WorkflowState(current_task=task)
+    task = Action(id="t1", instruction="Should we use microservices?")
+    state = WorkflowState(current_action=task)
 
     result_state = await block.execute(state)
 
@@ -254,8 +254,8 @@ async def test_linear_block_aggregates_cost_and_tokens(mock_runner, sample_soul)
     )
 
     block = LinearBlock("linear1", sample_soul, mock_runner)
-    task = Task(id="t1", instruction="Test task")
-    state = WorkflowState(current_task=task, total_cost_usd=0.1, total_tokens=100)
+    task = Action(id="t1", instruction="Test task")
+    state = WorkflowState(current_action=task, total_cost_usd=0.1, total_tokens=100)
 
     result_state = await block.execute(state)
 

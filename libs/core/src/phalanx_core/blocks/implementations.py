@@ -9,15 +9,15 @@ from typing import Any, Callable, Dict, List, Optional, Union
 
 from phalanx_core.blocks.base import BaseBlock
 from phalanx_core.state import WorkflowState
-from phalanx_core.primitives import Soul, Task
+from phalanx_core.primitives import Soul, Action
 from phalanx_core.runner import PhalanxTeamRunner
 
 
 class LinearBlock(BaseBlock):
     """
-    Executes the current task with a single agent.
+    Executes the current action with a single agent.
 
-    Typical Use: Sequential processing where one agent completes a task.
+    Typical Use: Sequential processing where one agent completes an action.
     Example: Research block → writes research report to results.
     """
 
@@ -25,8 +25,8 @@ class LinearBlock(BaseBlock):
         """
         Args:
             block_id: Unique block identifier.
-            soul: The agent that will execute the task.
-            runner: Execution engine for running tasks.
+            soul: The agent that will execute the action.
+            runner: Execution engine for running actions.
 
         Raises:
             ValueError: If block_id is empty (from BaseBlock).
@@ -37,10 +37,10 @@ class LinearBlock(BaseBlock):
 
     async def execute(self, state: WorkflowState) -> WorkflowState:
         """
-        Execute state.current_task using self.soul.
+        Execute state.current_action using self.soul.
 
         Args:
-            state: Must have state.current_task set.
+            state: Must have state.current_action set.
 
         Returns:
             New state with:
@@ -49,12 +49,12 @@ class LinearBlock(BaseBlock):
             - total_cost_usd and total_tokens updated with execution result
 
         Raises:
-            ValueError: If state.current_task is None.
+            ValueError: If state.current_action is None.
         """
-        if state.current_task is None:
-            raise ValueError(f"LinearBlock {self.block_id}: state.current_task is None")
+        if state.current_action is None:
+            raise ValueError(f"LinearBlock {self.block_id}: state.current_action is None")
 
-        result = await self.runner.execute_task(state.current_task, self.soul)
+        result = await self.runner.execute_task(state.current_action, self.soul)
 
         # Truncate output for message log (prevent state size explosion)
         truncated = result.output[:200] + "..." if len(result.output) > 200 else result.output
@@ -74,7 +74,7 @@ class LinearBlock(BaseBlock):
 
 class FanOutBlock(BaseBlock):
     """
-    Executes the current task with multiple agents in parallel.
+    Executes the current action with multiple agents in parallel.
 
     Typical Use: Gather diverse perspectives (3 reviewers critique a proposal).
     Output Format: JSON list [{"soul_id": "...", "output": "..."}, ...]
@@ -85,7 +85,7 @@ class FanOutBlock(BaseBlock):
         Args:
             block_id: Unique block identifier.
             souls: List of agents to run in parallel (must be non-empty).
-            runner: Execution engine for running tasks.
+            runner: Execution engine for running actions.
 
         Raises:
             ValueError: If block_id is empty or souls list is empty.
@@ -98,10 +98,10 @@ class FanOutBlock(BaseBlock):
 
     async def execute(self, state: WorkflowState) -> WorkflowState:
         """
-        Execute state.current_task in parallel across all souls.
+        Execute state.current_action in parallel across all souls.
 
         Args:
-            state: Must have state.current_task set.
+            state: Must have state.current_action set.
 
         Returns:
             New state with:
@@ -110,14 +110,14 @@ class FanOutBlock(BaseBlock):
             - total_cost_usd and total_tokens updated with all execution results
 
         Raises:
-            ValueError: If state.current_task is None.
+            ValueError: If state.current_action is None.
             Exception: If ANY soul execution fails, entire block fails (all-or-nothing).
         """
-        if state.current_task is None:
-            raise ValueError(f"FanOutBlock {self.block_id}: state.current_task is None")
+        if state.current_action is None:
+            raise ValueError(f"FanOutBlock {self.block_id}: state.current_action is None")
 
         # Execute all souls in parallel (preserves order)
-        tasks = [self.runner.execute_task(state.current_task, soul) for soul in self.souls]
+        tasks = [self.runner.execute_task(state.current_action, soul) for soul in self.souls]
         results = await asyncio.gather(*tasks)  # Raises on first failure
 
         # Aggregate outputs as JSON
@@ -209,7 +209,7 @@ class SynthesizeBlock(BaseBlock):
             "Identify common themes, resolve conflicts, and provide a comprehensive summary.\n\n"
             f"{combined_outputs}"
         )
-        synthesis_task = Task(id=f"{self.block_id}_synthesis", instruction=synthesis_instruction)
+        synthesis_task = Action(id=f"{self.block_id}_synthesis", instruction=synthesis_instruction)
 
         # Execute synthesis
         result = await self.runner.execute_task(synthesis_task, self.synthesizer_soul)
@@ -270,7 +270,7 @@ class DebateBlock(BaseBlock):
         Run debate for N iterations, alternating between soul_a and soul_b.
 
         Args:
-            state: Must have state.current_task set (the debate topic).
+            state: Must have state.current_action set (the debate topic).
 
         Returns:
             New state with:
@@ -280,10 +280,10 @@ class DebateBlock(BaseBlock):
             - total_cost_usd and total_tokens updated with all execution results
 
         Raises:
-            ValueError: If state.current_task is None.
+            ValueError: If state.current_action is None.
         """
-        if state.current_task is None:
-            raise ValueError(f"DebateBlock {self.block_id}: state.current_task is None")
+        if state.current_action is None:
+            raise ValueError(f"DebateBlock {self.block_id}: state.current_action is None")
 
         transcript: List[Dict[str, Any]] = []
         previous_b_output: str = ""
@@ -297,9 +297,9 @@ class DebateBlock(BaseBlock):
                 if previous_b_output
                 else None
             )
-            task_a = Task(
+            task_a = Action(
                 id=f"{self.block_id}_round{round_num}_a",
-                instruction=state.current_task.instruction,
+                instruction=state.current_action.instruction,
                 context=task_a_context,
             )
             result_a = await self.runner.execute_task(task_a, self.soul_a)
@@ -307,9 +307,9 @@ class DebateBlock(BaseBlock):
             total_tokens += result_a.total_tokens
 
             # Soul B responds to A's output
-            task_b = Task(
+            task_b = Action(
                 id=f"{self.block_id}_round{round_num}_b",
-                instruction=state.current_task.instruction,
+                instruction=state.current_action.instruction,
                 context=f"Response from {self.soul_a.role}: {result_a.output}",
             )
             result_b = await self.runner.execute_task(task_b, self.soul_b)
@@ -548,7 +548,7 @@ Error Context:
 
 Provide your analysis and recommendations in a structured format."""
 
-        analysis_task = Task(id=f"{self.block_id}_analysis", instruction=analysis_instruction)
+        analysis_task = Action(id=f"{self.block_id}_analysis", instruction=analysis_instruction)
 
         # Step 4: Execute analysis
         result = await self.runner.execute_task(analysis_task, self.team_lead_soul)
@@ -606,7 +606,7 @@ class EngineeringManagerBlock(BaseBlock):
         Generate alternative execution plan based on current context.
 
         Args:
-            state: Must have state.current_task set. Optionally reads failure context from shared_memory.
+            state: Must have state.current_action set. Optionally reads failure context from shared_memory.
 
         Returns:
             New state with:
@@ -616,14 +616,16 @@ class EngineeringManagerBlock(BaseBlock):
             - total_cost_usd and total_tokens updated with execution result
 
         Raises:
-            ValueError: If state.current_task is None.
+            ValueError: If state.current_action is None.
         """
-        # Step 1: Validate current_task
-        if state.current_task is None:
-            raise ValueError(f"EngineeringManagerBlock {self.block_id}: state.current_task is None")
+        # Step 1: Validate current_action
+        if state.current_action is None:
+            raise ValueError(
+                f"EngineeringManagerBlock {self.block_id}: state.current_action is None"
+            )
 
-        # Step 2: Gather context (current task + any failure info in shared_memory)
-        context_parts = [f"Original Goal: {state.current_task.instruction}"]
+        # Step 2: Gather context (current action + any failure info in shared_memory)
+        context_parts = [f"Original Goal: {state.current_action.instruction}"]
 
         # Check for common failure context keys
         if f"{self.block_id}_previous_errors" in state.shared_memory:
@@ -648,7 +650,7 @@ Example:
 
 Your plan:"""
 
-        planning_task = Task(id=f"{self.block_id}_planning", instruction=planning_instruction)
+        planning_task = Action(id=f"{self.block_id}_planning", instruction=planning_instruction)
 
         # Step 4: Execute planning task
         result = await self.runner.execute_task(planning_task, self.engineering_manager_soul)
@@ -741,7 +743,7 @@ class MessageBusBlock(BaseBlock):
         Execute N-agent round-robin message exchange.
 
         Args:
-            state: Must have state.current_task set (the discussion topic).
+            state: Must have state.current_action set (the discussion topic).
 
         Returns:
             New state with:
@@ -751,11 +753,11 @@ class MessageBusBlock(BaseBlock):
             - total_cost_usd and total_tokens updated with all execution results
 
         Raises:
-            ValueError: If state.current_task is None.
+            ValueError: If state.current_action is None.
         """
-        # Step 1: Validate current_task
-        if state.current_task is None:
-            raise ValueError(f"MessageBusBlock {self.block_id}: state.current_task is None")
+        # Step 1: Validate current_action
+        if state.current_action is None:
+            raise ValueError(f"MessageBusBlock {self.block_id}: state.current_action is None")
 
         # Step 2: Initialize transcript
         transcript: List[Dict[str, Any]] = []
@@ -779,10 +781,10 @@ class MessageBusBlock(BaseBlock):
                 else:
                     context_str = None
 
-                # Create task with context
-                task = Task(
+                # Create action with context
+                task = Action(
                     id=f"{self.block_id}_r{round_num}_{soul.id}",
-                    instruction=state.current_task.instruction,
+                    instruction=state.current_action.instruction,
                     context=context_str,
                 )
 
@@ -866,7 +868,7 @@ class RouterBlock(BaseBlock):
         Evaluate routing condition and store decision.
 
         Args:
-            state: If condition_evaluator is Soul, must have state.current_task set.
+            state: If condition_evaluator is Soul, must have state.current_action set.
 
         Returns:
             New state with:
@@ -876,22 +878,22 @@ class RouterBlock(BaseBlock):
             - total_cost_usd and total_tokens updated with execution result (if Soul evaluator)
 
         Raises:
-            ValueError: If condition_evaluator is Soul but current_task is None.
+            ValueError: If condition_evaluator is Soul but current_action is None.
         """
         # Step 1: Evaluate condition based on type
         additional_cost = 0.0
         additional_tokens = 0
         if isinstance(self.condition_evaluator, Soul):
             # Soul-based evaluation (LLM decides)
-            if state.current_task is None:
+            if state.current_action is None:
                 raise ValueError(
-                    f"RouterBlock {self.block_id}: state.current_task is None (required for Soul evaluator)"
+                    f"RouterBlock {self.block_id}: state.current_action is None (required for Soul evaluator)"
                 )
 
-            # Execute routing task with Soul
+            # Execute routing action with Soul
             # Type narrowing: runner is guaranteed non-None when condition_evaluator is Soul (validated in __init__)
             assert self.runner is not None, "Runner must be provided for Soul evaluator"
-            result = await self.runner.execute_task(state.current_task, self.condition_evaluator)
+            result = await self.runner.execute_task(state.current_action, self.condition_evaluator)
             decision = result.output.strip()
             additional_cost = result.cost_usd
             additional_tokens = result.total_tokens
@@ -947,7 +949,7 @@ class PlaceholderBlock(BaseBlock):
         Store description in results and append system message.
 
         Args:
-            state: Current workflow state. current_task NOT required.
+            state: Current workflow state. current_action NOT required.
 
         Returns:
             New state with:

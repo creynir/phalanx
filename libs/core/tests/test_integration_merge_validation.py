@@ -13,7 +13,7 @@ Priority: Tests the renamed classes and their cross-feature interactions.
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 from phalanx_core.workflow import Workflow
-from phalanx_core.primitives import Soul, Task, Step
+from phalanx_core.primitives import Soul, Action, Step
 from phalanx_core.state import WorkflowState
 from phalanx_core.blocks.base import BaseBlock
 from phalanx_core.blocks.implementations import (
@@ -126,7 +126,7 @@ async def test_workflow_execution_renamed_class():
 
     wf.add_block(block_a).add_block(block_b).set_entry("a").add_transition("a", "b")
 
-    state = WorkflowState(current_task=Task(id="task1", instruction="test"))
+    state = WorkflowState(current_action=Action(id="task1", instruction="test"))
     final_state = await wf.run(state)
 
     # Verify both blocks executed
@@ -160,13 +160,13 @@ def test_skill_not_exported_from_phalanx_core():
     assert not hasattr(phalanx_core, deleted_class_name)
 
 
-def test_primitives_only_exports_soul_task_step():
-    """Verify primitives.py exports only Soul, Task, Step."""
+def test_primitives_only_exports_soul_action_step():
+    """Verify primitives.py exports only Soul, Action, Step."""
     from phalanx_core import primitives
 
     # These should exist
     assert hasattr(primitives, "Soul")
-    assert hasattr(primitives, "Task")
+    assert hasattr(primitives, "Action")
     assert hasattr(primitives, "Step")
     # Deleted class should not exist
     deleted_class_name = "S" + "kill"
@@ -233,7 +233,7 @@ async def test_team_lead_block_team_lead_soul_parameter(mock_runner, test_souls)
     )
 
     state = WorkflowState(
-        current_task=Task(id="task1", instruction="test"),
+        current_action=Action(id="task1", instruction="test"),
         shared_memory={"error_key": "some error"},
     )
 
@@ -297,7 +297,7 @@ async def test_engineering_manager_soul_parameter(mock_runner, test_souls):
         runner=mock_runner,
     )
 
-    state = WorkflowState(current_task=Task(id="task1", instruction="test"))
+    state = WorkflowState(current_action=Action(id="task1", instruction="test"))
     result_state = await block.execute(state)
     assert "em1" in result_state.results
 
@@ -395,7 +395,7 @@ async def test_workflow_orchestrates_team_lead_and_engineering_manager(mock_runn
     ).set_entry("tl1").add_transition("tl1", "em1")
 
     state = WorkflowState(
-        current_task=Task(id="task1", instruction="test"),
+        current_action=Action(id="task1", instruction="test"),
         shared_memory={"error_key": "error_context"},
     )
 
@@ -424,7 +424,7 @@ async def test_retry_block_with_team_lead_block_captures_errors(mock_runner, tes
         runner=mock_runner,
     )
 
-    state = WorkflowState(current_task=Task(id="task1", instruction="test"))
+    state = WorkflowState(current_action=Action(id="task1", instruction="test"))
 
     # RetryBlock should capture the error in shared_memory
     try:
@@ -458,7 +458,7 @@ async def test_renamed_blocks_share_memory_format_compatibility(mock_runner, tes
     )
 
     state = WorkflowState(
-        current_task=Task(id="task1", instruction="test"),
+        current_action=Action(id="task1", instruction="test"),
         shared_memory={"error_key": "some error"},
     )
 
@@ -502,7 +502,7 @@ async def test_all_renamed_classes_in_workflow_execution(mock_runner, test_souls
     (wf.add_block(tl).add_block(em).set_entry("advisor").add_transition("advisor", "planner"))
 
     state = WorkflowState(
-        current_task=Task(id="task1", instruction="recover from error"),
+        current_action=Action(id="task1", instruction="recover from error"),
         shared_memory={"errors": ["error1", "error2"]},
     )
 

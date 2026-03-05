@@ -12,7 +12,7 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock
 
 from phalanx_core.state import WorkflowState
-from phalanx_core.primitives import Soul, Task
+from phalanx_core.primitives import Soul, Action
 from phalanx_core.runner import ExecutionResult
 from phalanx_core.blocks.implementations import DebateBlock
 
@@ -53,8 +53,8 @@ async def test_debate_block_context_formatting_first_round(mock_runner, debate_s
         iterations=1,
         runner=mock_runner,
     )
-    task = Task(id="main", instruction="Should we use microservices?")
-    state = WorkflowState(current_task=task)
+    task = Action(id="main", instruction="Should we use microservices?")
+    state = WorkflowState(current_action=task)
 
     await block.execute(state)
 
@@ -94,8 +94,8 @@ async def test_debate_block_context_formatting_second_round(mock_runner, debate_
         iterations=2,
         runner=mock_runner,
     )
-    task = Task(id="main", instruction="Debate topic")
-    state = WorkflowState(current_task=task)
+    task = Action(id="main", instruction="Debate topic")
+    state = WorkflowState(current_action=task)
 
     await block.execute(state)
 
@@ -137,8 +137,8 @@ async def test_debate_block_transcript_structure_validation(mock_runner, debate_
         iterations=2,
         runner=mock_runner,
     )
-    task = Task(id="main", instruction="Test")
-    state = WorkflowState(current_task=task)
+    task = Action(id="main", instruction="Test")
+    state = WorkflowState(current_action=task)
 
     result_state = await block.execute(state)
 
@@ -178,8 +178,8 @@ async def test_debate_block_single_iteration_edge_case(mock_runner, debate_souls
         iterations=1,
         runner=mock_runner,
     )
-    task = Task(id="main", instruction="Quick debate")
-    state = WorkflowState(current_task=task)
+    task = Action(id="main", instruction="Quick debate")
+    state = WorkflowState(current_action=task)
 
     result_state = await block.execute(state)
 
@@ -214,11 +214,11 @@ async def test_debate_block_preserves_state_fields(mock_runner, debate_souls):
         iterations=1,
         runner=mock_runner,
     )
-    task = Task(id="main", instruction="Test")
+    task = Action(id="main", instruction="Test")
 
     # Create state with existing data
     initial_state = WorkflowState(
-        current_task=task,
+        current_action=task,
         results={"previous_block": "previous output"},
         shared_memory={"existing_key": "existing_value"},
         messages=[{"role": "system", "content": "Previous message"}],
@@ -242,7 +242,7 @@ async def test_debate_block_preserves_state_fields(mock_runner, debate_souls):
 @pytest.mark.asyncio
 async def test_debate_block_current_task_none_error(mock_runner, debate_souls):
     """
-    Test that DebateBlock raises ValueError when current_task is None.
+    Test that DebateBlock raises ValueError when current_action is None.
 
     This is an edge case that should be tested for all blocks.
     """
@@ -253,9 +253,9 @@ async def test_debate_block_current_task_none_error(mock_runner, debate_souls):
         iterations=1,
         runner=mock_runner,
     )
-    state = WorkflowState(current_task=None)
+    state = WorkflowState(current_action=None)
 
-    with pytest.raises(ValueError, match="current_task is None"):
+    with pytest.raises(ValueError, match="current_action is None"):
         await block.execute(state)
 
 
@@ -280,8 +280,8 @@ async def test_debate_block_role_names_in_context(mock_runner, debate_souls):
         iterations=2,
         runner=mock_runner,
     )
-    task = Task(id="main", instruction="Debate")
-    state = WorkflowState(current_task=task)
+    task = Action(id="main", instruction="Debate")
+    state = WorkflowState(current_action=task)
 
     await block.execute(state)
 
@@ -323,8 +323,8 @@ async def test_debate_block_task_ids_are_unique(mock_runner, debate_souls):
         iterations=2,
         runner=mock_runner,
     )
-    task = Task(id="main", instruction="Test")
-    state = WorkflowState(current_task=task)
+    task = Action(id="main", instruction="Test")
+    state = WorkflowState(current_action=task)
 
     await block.execute(state)
 

@@ -3,7 +3,7 @@ Tests for WorkflowState data model.
 """
 
 from phalanx_core.state import WorkflowState
-from phalanx_core.primitives import Task
+from phalanx_core.primitives import Action
 
 
 def test_workflow_state_initialization():
@@ -11,19 +11,19 @@ def test_workflow_state_initialization():
     state = WorkflowState()
     assert state.messages == []
     assert state.shared_memory == {}
-    assert state.current_task is None
+    assert state.current_action is None
     assert state.results == {}
     assert state.metadata == {}
     assert state.total_cost_usd == 0.0
     assert state.total_tokens == 0
 
 
-def test_workflow_state_with_task():
-    """Verify WorkflowState accepts Task objects."""
-    task = Task(id="t1", instruction="Do work")
-    state = WorkflowState(current_task=task)
-    assert state.current_task.id == "t1"
-    assert state.current_task.instruction == "Do work"
+def test_workflow_state_with_action():
+    """Verify WorkflowState accepts Action objects."""
+    action = Action(id="t1", instruction="Do work")
+    state = WorkflowState(current_action=action)
+    assert state.current_action.id == "t1"
+    assert state.current_action.instruction == "Do work"
 
 
 def test_workflow_state_immutability():
@@ -43,7 +43,7 @@ def test_workflow_state_model_fields():
     required = {
         "messages",
         "shared_memory",
-        "current_task",
+        "current_action",
         "results",
         "metadata",
         "total_cost_usd",
@@ -54,11 +54,11 @@ def test_workflow_state_model_fields():
 
 def test_workflow_state_with_all_fields():
     """Verify WorkflowState can be initialized with all fields."""
-    task = Task(id="t1", instruction="Test task")
+    action = Action(id="t1", instruction="Test action")
     state = WorkflowState(
         messages=[{"role": "system", "content": "Hello"}],
         shared_memory={"key": "value"},
-        current_task=task,
+        current_action=action,
         results={"block1": "output1"},
         metadata={"blueprint_name": "test_blueprint"},
         total_cost_usd=0.05,
@@ -68,7 +68,7 @@ def test_workflow_state_with_all_fields():
     assert len(state.messages) == 1
     assert state.messages[0]["role"] == "system"
     assert state.shared_memory["key"] == "value"
-    assert state.current_task.id == "t1"
+    assert state.current_action.id == "t1"
     assert state.results["block1"] == "output1"
     assert state.metadata["blueprint_name"] == "test_blueprint"
     assert state.total_cost_usd == 0.05

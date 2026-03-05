@@ -58,11 +58,11 @@ async def test_placeholder_block_shared_memory_and_metadata_unchanged():
 @pytest.mark.asyncio
 async def test_placeholder_block_current_task_none_does_not_raise():
     """
-    AC-5: execute() does not require state.current_task to be set
-    (current_task=None is valid)
+    AC-5: execute() does not require state.current_action to be set
+    (current_action=None is valid)
     """
     block = PlaceholderBlock(block_id="pb", description="desc")
-    state = WorkflowState(current_task=None)
+    state = WorkflowState(current_action=None)
 
     # Should not raise any exception
     result_state = await block.execute(state)

@@ -4,7 +4,7 @@ WorkflowState data model for workflow execution context.
 
 from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, ConfigDict, Field
-from phalanx_core.primitives import Task
+from phalanx_core.primitives import Action
 
 
 class WorkflowState(BaseModel):
@@ -25,9 +25,9 @@ class WorkflowState(BaseModel):
         default_factory=dict,
         description="Cross-block shared data. Keys: arbitrary strings. Values: JSON-serializable.",
     )
-    current_task: Optional[Task] = Field(
+    current_action: Optional[Action] = Field(
         default=None,
-        description="Active task being processed. Blocks read this to determine their work.",
+        description="Active action being processed. Blocks read this to determine their work.",
     )
     results: Dict[str, str] = Field(
         default_factory=dict,

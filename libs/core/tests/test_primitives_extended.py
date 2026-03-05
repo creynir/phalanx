@@ -6,7 +6,7 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock
 
 from phalanx_core.state import WorkflowState
-from phalanx_core.primitives import Soul, Task, Step
+from phalanx_core.primitives import Soul, Action, Step
 from phalanx_core.runner import ExecutionResult
 from phalanx_core.blocks.implementations import LinearBlock
 
@@ -39,8 +39,8 @@ async def test_step_executes_hooks(mock_runner, sample_soul):
 
     # Create a LinearBlock as the wrapped block
     block = LinearBlock("linear1", sample_soul, mock_runner)
-    task = Task(id="t1", instruction="Test task")
-    initial_state = WorkflowState(current_task=task)
+    task = Action(id="t1", instruction="Test task")
+    initial_state = WorkflowState(current_action=task)
 
     # Define hooks that track execution order by mutating state.metadata
     def pre_hook(state: WorkflowState) -> WorkflowState:
@@ -97,8 +97,8 @@ async def test_step_no_hooks(mock_runner, sample_soul):
 
     # Create block and state
     block = LinearBlock("linear1", sample_soul, mock_runner)
-    task = Task(id="t1", instruction="Test task")
-    initial_state = WorkflowState(current_task=task)
+    task = Action(id="t1", instruction="Test task")
+    initial_state = WorkflowState(current_action=task)
 
     # Create Step with no hooks
     step = Step(block, pre_hook=None, post_hook=None)
@@ -124,8 +124,8 @@ async def test_step_only_pre_hook(mock_runner, sample_soul):
 
     # Create block and state
     block = LinearBlock("linear1", sample_soul, mock_runner)
-    task = Task(id="t1", instruction="Test task")
-    initial_state = WorkflowState(current_task=task)
+    task = Action(id="t1", instruction="Test task")
+    initial_state = WorkflowState(current_action=task)
 
     # Define only pre_hook
     def pre_hook(state: WorkflowState) -> WorkflowState:
@@ -156,8 +156,8 @@ async def test_step_only_post_hook(mock_runner, sample_soul):
 
     # Create block and state
     block = LinearBlock("linear1", sample_soul, mock_runner)
-    task = Task(id="t1", instruction="Test task")
-    initial_state = WorkflowState(current_task=task)
+    task = Action(id="t1", instruction="Test task")
+    initial_state = WorkflowState(current_action=task)
 
     # Define only post_hook
     def post_hook(state: WorkflowState) -> WorkflowState:
@@ -191,8 +191,8 @@ async def test_step_state_flows_through_phases(mock_runner, sample_soul):
 
     # Create block and state
     block = LinearBlock("linear1", sample_soul, mock_runner)
-    task = Task(id="t1", instruction="Test task")
-    initial_state = WorkflowState(current_task=task)
+    task = Action(id="t1", instruction="Test task")
+    initial_state = WorkflowState(current_action=task)
 
     # Define hooks that add to shared_memory to track state flow
     def pre_hook(state: WorkflowState) -> WorkflowState:

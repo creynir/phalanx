@@ -1,13 +1,13 @@
 from typing import Any, AsyncGenerator, Dict
 from pydantic import BaseModel
 
-from phalanx_core.primitives import Soul, Task
+from phalanx_core.primitives import Soul, Action
 from phalanx_core.llm.client import LiteLLMClient
 
 
 class ExecutionResult(BaseModel):
     """
-    The result of a single task execution by an agent.
+    The result of a single action execution by an agent.
     """
 
     task_id: str
@@ -20,15 +20,15 @@ class ExecutionResult(BaseModel):
 
 class PhalanxTeamRunner:
     """
-    Core executor that runs a Task using a specific Soul via the LLM client.
+    Core executor that runs an Action using a specific Soul via the LLM client.
     """
 
     def __init__(self, model_name: str = "gpt-4o"):
         self.llm_client = LiteLLMClient(model_name=model_name)
 
-    async def execute_task(self, task: Task, soul: Soul) -> ExecutionResult:
+    async def execute_task(self, task: Action, soul: Soul) -> ExecutionResult:
         """
-        Executes a task synchronously (waits for full completion).
+        Executes an action synchronously (waits for full completion).
         """
         messages = [{"role": "user", "content": self._build_prompt(task)}]
 
@@ -42,9 +42,9 @@ class PhalanxTeamRunner:
             total_tokens=response["total_tokens"],
         )
 
-    async def stream_task(self, task: Task, soul: Soul) -> AsyncGenerator[str, None]:
+    async def stream_task(self, task: Action, soul: Soul) -> AsyncGenerator[str, None]:
         """
-        Executes a task and streams the response tokens back.
+        Executes an action and streams the response tokens back.
         """
         messages = [{"role": "user", "content": self._build_prompt(task)}]
 
@@ -53,9 +53,9 @@ class PhalanxTeamRunner:
         ):
             yield chunk
 
-    def _build_prompt(self, task: Task) -> str:
+    def _build_prompt(self, task: Action) -> str:
         """
-        Constructs the final prompt string from the task definition.
+        Constructs the final prompt string from the action definition.
         """
         prompt = task.instruction
         if task.context:

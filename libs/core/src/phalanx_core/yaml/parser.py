@@ -21,7 +21,7 @@ from phalanx_core.blocks.implementations import (
     RouterBlock,
     PlaceholderBlock,
 )
-from phalanx_core.primitives import Soul, Task
+from phalanx_core.primitives import Soul, Action
 from phalanx_core.runner import PhalanxTeamRunner
 from phalanx_core.workflow import Workflow
 from phalanx_core.yaml.schema import (
@@ -377,9 +377,9 @@ def parse_workflow_yaml(yaml_str_or_dict: Union[str, Dict[str, Any]]) -> Workflo
     return wf
 
 
-def parse_task_yaml(yaml_str_or_dict: Union[str, Dict[str, Any]]) -> Task:
+def parse_task_yaml(yaml_str_or_dict: Union[str, Dict[str, Any]]) -> Action:
     """
-    Parse a YAML task definition into a Task primitive.
+    Parse a YAML action definition into an Action primitive.
 
     Args:
         yaml_str_or_dict: One of:
@@ -388,7 +388,7 @@ def parse_task_yaml(yaml_str_or_dict: Union[str, Dict[str, Any]]) -> Task:
           - dict → use as pre-parsed data directly
 
     Returns:
-        Validated Task instance with id, instruction, and optional context populated.
+        Validated Action instance with id, instruction, and optional context populated.
 
     Raises:
         ValidationError: If input doesn't match TaskDef schema (missing required fields, wrong types).
@@ -412,8 +412,8 @@ def parse_task_yaml(yaml_str_or_dict: Union[str, Dict[str, Any]]) -> Task:
     # Step 2: Validate against Pydantic schema (raises ValidationError on failure)
     task_def = TaskDef.model_validate(raw)
 
-    # Step 3: Create and return Task primitive
-    return Task(
+    # Step 3: Create and return Action primitive
+    return Action(
         id=task_def.id,
         instruction=task_def.instruction,
         context=task_def.context,

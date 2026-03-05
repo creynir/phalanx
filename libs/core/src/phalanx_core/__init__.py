@@ -2,7 +2,7 @@
 Phalanx Agent OS Core Engine
 """
 
-from .primitives import Soul, Task, Step
+from .primitives import Soul, Action, Step
 from .runner import PhalanxTeamRunner, ExecutionResult
 from .state import WorkflowState
 from .blocks.base import BaseBlock
@@ -24,7 +24,7 @@ from .yaml import parse_workflow_yaml
 
 __all__ = [
     "Soul",
-    "Task",
+    "Action",
     "Step",
     "PhalanxTeamRunner",
     "ExecutionResult",

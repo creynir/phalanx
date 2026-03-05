@@ -25,15 +25,15 @@ class Soul(BaseModel):
     )
 
 
-class Task(BaseModel):
+class Action(BaseModel):
     """
     Represents an isolated instruction for an agent to execute.
     """
 
-    id: str = Field(..., description="Unique identifier for the task")
-    instruction: str = Field(..., description="The main instruction or prompt for the task")
+    id: str = Field(..., description="Unique identifier for the action")
+    instruction: str = Field(..., description="The main instruction or prompt for the action")
     context: Optional[str] = Field(
-        default=None, description="Additional context or background information for the task"
+        default=None, description="Additional context or background information for the action"
     )
 
 
