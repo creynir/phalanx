@@ -33,8 +33,12 @@ class AgentBackend(ABC):
         """
 
     @abstractmethod
-    def build_resume_command(self, chat_id: str) -> list[str]:
-        """Build the CLI command to resume an existing session."""
+    def build_resume_command(self, chat_id: str, auto_approve: bool = False) -> list[str]:
+        """Build the CLI command to resume an existing session.
+
+        When auto_approve is True, the command should include backend-specific
+        flags (e.g. --yolo) to enable auto-approval of tool calls.
+        """
 
     @abstractmethod
     def parse_chat_id(self, output: str) -> str | None:

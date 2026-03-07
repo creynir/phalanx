@@ -38,8 +38,12 @@ class GeminiBackend(AgentBackend):
             cmd.append(f"@{prompt}")
         return cmd
 
-    def build_resume_command(self, chat_id: str) -> list[str]:
-        return [self.binary_name(), "--resume", chat_id]
+    def build_resume_command(self, chat_id: str, auto_approve: bool = False) -> list[str]:
+        cmd = [self.binary_name()]
+        if auto_approve:
+            cmd.extend(self.auto_approve_flags())
+        cmd.extend(["--resume", chat_id])
+        return cmd
 
     def parse_chat_id(self, output: str) -> str | None:
         match = re.search(

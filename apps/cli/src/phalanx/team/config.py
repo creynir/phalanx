@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 
-VALID_ROLES = {"researcher", "coder", "reviewer", "architect"}
+VALID_ROLES = {"researcher", "coder", "reviewer", "architect", "generalist"}
 
 DEFAULT_MODELS: dict[str, dict[str, str]] = {
     "cursor": {
@@ -22,6 +22,7 @@ DEFAULT_MODELS: dict[str, dict[str, str]] = {
         "coder": "sonnet-4.6",
         "reviewer": "sonnet-4.6",
         "architect": "opus-4.6",
+        "generalist": "sonnet-4.6",
         "lead": "sonnet-4.6",
     },
     "claude": {
@@ -30,6 +31,7 @@ DEFAULT_MODELS: dict[str, dict[str, str]] = {
         "coder": "claude-sonnet-4-20250514",
         "reviewer": "claude-sonnet-4-20250514",
         "architect": "claude-opus-4-20250514",
+        "generalist": "claude-sonnet-4-20250514",
         "lead": "claude-sonnet-4-20250514",
     },
     "gemini": {
@@ -38,6 +40,7 @@ DEFAULT_MODELS: dict[str, dict[str, str]] = {
         "coder": "gemini-2.5-pro",
         "reviewer": "gemini-2.5-pro",
         "architect": "gemini-2.5-pro",
+        "generalist": "gemini-2.5-pro",
         "lead": "gemini-2.5-pro",
     },
     "codex": {
@@ -46,6 +49,7 @@ DEFAULT_MODELS: dict[str, dict[str, str]] = {
         "coder": "o3",
         "reviewer": "o3",
         "architect": "o3",
+        "generalist": "o3",
         "lead": "o3",
     },
 }

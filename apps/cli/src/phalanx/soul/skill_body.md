@@ -37,7 +37,7 @@ phalanx status --json
 ```
 
 ### Agent roles
-Available roles: `researcher`, `coder`, `reviewer`, `architect`
+Available roles: `researcher`, `coder`, `reviewer`, `architect`, `generalist`
 Phalanx picks the optimal model for each role automatically.
 Example: `--agents researcher,coder:2,reviewer`
 

@@ -40,8 +40,12 @@ class ClaudeBackend(AgentBackend):
             cmd.append(f"@{prompt}")
         return cmd
 
-    def build_resume_command(self, chat_id: str) -> list[str]:
-        return [self.binary_name(), "--continue", chat_id]
+    def build_resume_command(self, chat_id: str, auto_approve: bool = False) -> list[str]:
+        cmd = [self.binary_name()]
+        if auto_approve:
+            cmd.extend(self.auto_approve_flags())
+        cmd.extend(["--continue", chat_id])
+        return cmd
 
     def interrupt_sequence(self) -> list[str]:
         return ["Escape", "C-c"]
