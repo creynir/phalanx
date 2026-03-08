@@ -261,6 +261,9 @@ class ProcessManager:
         cmd_str = shlex.join(cmd_parts)
         pane.send_keys(cmd_str, enter=True, literal=True)
 
+        if auto_approve:
+            self._send_auto_run_keys(pane, backend, agent_id)
+
         agent_proc = AgentProcess(
             agent_id=agent_id,
             team_id=team_id,
@@ -318,6 +321,9 @@ class ProcessManager:
 
         cmd_str = shlex.join(cmd_parts)
         pane.send_keys(cmd_str, enter=True, literal=True)
+
+        if auto_approve:
+            self._send_auto_run_keys(pane, backend, agent_id)
 
         agent_proc = AgentProcess(
             agent_id=agent_id,
@@ -501,6 +507,26 @@ class ProcessManager:
         return dict(self._processes)
 
     # --- internal ---
+
+    def _send_auto_run_keys(self, pane: libtmux.Pane, backend: AgentBackend, agent_id: str) -> None:
+        """Send backend-specific keystrokes to enable auto-run after TUI starts."""
+        keys = backend.auto_run_keys()
+        if not keys:
+            return
+        delay = backend.auto_run_delay()
+        logger.debug(
+            "Will send auto-run keys %s to agent %s after %.1fs delay",
+            keys,
+            agent_id,
+            delay,
+        )
+        if delay > 0:
+            time.sleep(delay)
+        for key in keys:
+            try:
+                pane.send_keys(key, enter=False)
+            except Exception as e:
+                logger.warning("Failed to send auto-run key %r to agent %s: %s", key, agent_id, e)
 
     def _setup_agent_env(self, pane: libtmux.Pane, agent_id: str, team_id: str) -> None:
         """Export identity env vars and dev phalanx alias into the agent's shell.

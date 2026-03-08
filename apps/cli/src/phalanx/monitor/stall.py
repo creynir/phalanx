@@ -33,6 +33,8 @@ IDLE_TIMEOUT_SECONDS = 1800  # 30 minutes
 SCREEN_CHECK_INTERVAL = 20  # seconds between screen scrapes
 MAX_RETRY_BACKOFF = 300  # max 5 minutes between retries
 IDLE_NUDGE_COOLDOWN = 60  # seconds between repeated agent_idle detections
+STARTUP_GRACE_SECONDS = 60  # ignore DEAD during TUI cold-start
+STARTUP_DEAD_THRESHOLD = 3  # consecutive DEAD checks before confirming
 
 
 class AgentState(str, Enum):
@@ -277,6 +279,8 @@ class StallDetector:
         self._blocked_agents: dict[str, PromptDetection] = {}
         self._last_screen_check: dict[str, float] = {}
         self._last_idle_nudge: dict[str, float] = {}
+        self._first_seen: dict[str, float] = {}
+        self._consecutive_dead: dict[str, int] = {}
 
     def check_agent(self, agent_id: str) -> StallEvent | None:
         """Check a single agent for stalls or prompts.
@@ -290,14 +294,33 @@ class StallDetector:
 
         now = time.time()
 
+        if agent_id not in self._first_seen:
+            self._first_seen[agent_id] = now
+
         # 2. Check if agent is alive
         proc = self._pm.get_process(agent_id)
         if proc is None or not proc.is_alive():
+            age = now - self._first_seen[agent_id]
+            consecutive = self._consecutive_dead.get(agent_id, 0) + 1
+            self._consecutive_dead[agent_id] = consecutive
+
+            if age < STARTUP_GRACE_SECONDS and consecutive < STARTUP_DEAD_THRESHOLD:
+                logger.debug(
+                    "Agent %s looks dead but within startup grace (%ds, check %d/%d) — skipping",
+                    agent_id,
+                    int(age),
+                    consecutive,
+                    STARTUP_DEAD_THRESHOLD,
+                )
+                return None
+
             return StallEvent(
                 agent_id=agent_id,
                 state=AgentState.DEAD,
                 timestamp=now,
             )
+        else:
+            self._consecutive_dead.pop(agent_id, None)
 
         # 3. 30-minute idle timeout
         if hb_state.is_stale(now):
@@ -320,6 +343,14 @@ class StallDetector:
         self._last_screen_check[agent_id] = now
         screen = self._pm.capture_screen(agent_id)
         if screen is None:
+            age = now - self._first_seen.get(agent_id, now)
+            if age < STARTUP_GRACE_SECONDS:
+                logger.debug(
+                    "capture_screen returned None for agent %s but within startup grace (%ds) — skipping",
+                    agent_id,
+                    int(age),
+                )
+                return None
             logger.warning("capture_screen returned None for agent %s — treating as dead", agent_id)
             return StallEvent(
                 agent_id=agent_id,

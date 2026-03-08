@@ -71,6 +71,17 @@ class CursorBackend(AgentBackend):
     def auto_approve_flags(self) -> list[str]:
         return ["--yolo"]
 
+    def auto_run_keys(self) -> list[str]:
+        return ["BTab"]
+
+    def auto_run_delay(self) -> float:
+        import os
+
+        env_val = os.environ.get("PHALANX_CURSOR_AUTO_RUN_DELAY")
+        if env_val is not None:
+            return float(env_val)
+        return 8.0
+
     def spawn_delay(self) -> float:
         # Cursor agent processes share ~/.cursor/cli-config.json and race to
         # rewrite it on startup. A 3-second stagger between spawns is enough
