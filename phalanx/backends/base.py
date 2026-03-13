@@ -72,3 +72,19 @@ class AgentBackend(ABC):
     def interrupt_sequence(self) -> list[str]:
         """List of tmux keys to send to interrupt the agent and return to prompt."""
         return ["C-c", "C-c"]
+
+    def auto_run_keys(self) -> list[str]:
+        """Tmux key sequences to send after TUI starts to enable auto-run.
+
+        Some backends (e.g. Cursor) have a separate shell command allowlist
+        that is not covered by --yolo. Sending these keys enables
+        "Run Everything" in the TUI. Default: empty (no extra keys needed).
+        """
+        return []
+
+    def auto_run_delay(self) -> float:
+        """Seconds to wait after spawn before sending auto_run_keys.
+
+        The TUI must be initialized before the keys are sent.
+        """
+        return 5.0
