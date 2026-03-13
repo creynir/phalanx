@@ -167,7 +167,7 @@ def _launch_agent(
 
 
 @cli.command("create-team")
-@click.argument("task", required=False, default=None)
+@click.option("--task", required=False, default=None, help="The shared task for the team")
 @click.option(
     "--config",
     "config_path",
@@ -185,9 +185,10 @@ def _launch_agent(
     "--max-runtime", type=int, default=None, help="Max runtime in seconds (default: 1800)"
 )
 @click.option("--worktree", is_flag=True, help="Create a git worktree for the team")
+@click.option("--auto-approve", is_flag=True, help="Enable auto-approve for all spawned agents")
 @click.pass_context
 def create_team_cmd(
-    ctx, task, config_path, agents, backend, model, idle_timeout, max_runtime, worktree=False
+    ctx, task, config_path, agents, backend, model, idle_timeout, max_runtime, worktree=False, auto_approve=False
 ):
     """Create a team with per-agent prompts (--config) or simple shared task."""
     from phalanx.monitor.heartbeat import HeartbeatMonitor
@@ -197,7 +198,7 @@ def create_team_cmd(
     phalanx_config = _get_config(root)
     db = _get_db(root)
     backend_name = backend or phalanx_config.default_backend
-    auto_approve = ctx.obj.get("auto_approve", False)
+    auto_approve = auto_approve or ctx.obj.get("auto_approve", False)
 
     effective_idle = idle_timeout or phalanx_config.idle_timeout_seconds
     effective_max_runtime = max_runtime or phalanx_config.max_runtime_seconds
@@ -222,6 +223,7 @@ def create_team_cmd(
             config=phalanx_config,
             idle_timeout=effective_idle,
             max_runtime=effective_max_runtime,
+            worktree=worktree,
         )
         result = {
             "ok": True,
@@ -738,8 +740,9 @@ def send_keys_cmd(ctx, agent_id, keys, no_enter):
     default=False,
     help="Resume only the team lead, leaving other agents dead",
 )
+@click.option("--auto-approve", is_flag=True, help="Enable auto-approve when resuming")
 @click.pass_context
-def resume_cmd(ctx, team_id, lead_only):
+def resume_cmd(ctx, team_id, lead_only, auto_approve):
     """Resume a stopped/dead team by restarting all dead/suspended agents."""
     from phalanx.monitor.heartbeat import HeartbeatMonitor
     from phalanx.process.manager import ProcessManager
@@ -764,7 +767,7 @@ def resume_cmd(ctx, team_id, lead_only):
         heartbeat_monitor=hb,
         team_id=team_id,
         resume_all=not lead_only,
-        auto_approve=ctx.obj.get("auto_approve", False),
+        auto_approve=auto_approve or ctx.obj.get("auto_approve", False),
     )
 
     if ctx.obj.get("json_mode"):
@@ -785,8 +788,9 @@ def resume_cmd(ctx, team_id, lead_only):
     default=None,
     help="Reply to send as keystrokes when agent is blocked_on_prompt (e.g. 'y')",
 )
+@click.option("--auto-approve", is_flag=True, help="Enable auto-approve for resumed agent")
 @click.pass_context
-def resume_agent_cmd(ctx, agent_id, reply):
+def resume_agent_cmd(ctx, agent_id, reply, auto_approve):
     """Resume a single dead/suspended agent, or unblock a blocked_on_prompt agent.
 
     Use --reply to send a keystroke reply to an agent waiting on a prompt.
@@ -856,7 +860,7 @@ def resume_agent_cmd(ctx, agent_id, reply):
             process_manager=pm,
             heartbeat_monitor=hb,
             agent_id=agent_id,
-            auto_approve=ctx.obj.get("auto_approve", False),
+            auto_approve=auto_approve or ctx.obj.get("auto_approve", False),
         )
     except ValueError as e:
         if ctx.obj.get("json_mode"):

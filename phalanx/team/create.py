@@ -59,6 +59,7 @@ def create_team_from_config(
     config: PhalanxConfig | None = None,
     idle_timeout: int = 1800,
     max_runtime: int = 1800,
+    worktree: bool = False,
 ) -> tuple[str, str, list[str]]:
     """Create a team from a full config with per-agent prompts.
 
@@ -74,10 +75,20 @@ def create_team_from_config(
     team_dir.mkdir(parents=True, exist_ok=True)
     team_config.save(team_dir / "config.json")
 
+    repo_path = phalanx_root.parent if phalanx_root.name == ".phalanx" else Path.cwd()
+
     worker_ids = []
     for agent_spec in team_config.agents:
         effective_backend = agent_spec.backend or backend_name
         model = agent_spec.resolve_model(effective_backend)
+
+        worker_worktree = agent_spec.worktree
+        worker_working_dir = agent_spec.worktree
+        if worktree or worker_worktree:
+            wt_path = _create_agent_worktree(repo_path, team_id, agent_spec.agent_id)
+            if wt_path is not None:
+                worker_worktree = str(wt_path)
+                worker_working_dir = str(wt_path)
 
         spawn_agent(
             phalanx_root=phalanx_root,
@@ -90,8 +101,8 @@ def create_team_from_config(
             agent_id=agent_spec.agent_id,
             backend_name=effective_backend,
             model=model,
-            worktree=agent_spec.worktree,
-            working_dir=agent_spec.worktree,
+            worktree=worker_worktree,
+            working_dir=worker_working_dir,
             auto_approve=auto_approve,
             config=config,
         )
@@ -100,6 +111,14 @@ def create_team_from_config(
     lead_backend = team_config.lead.backend or backend_name
     lead_model = team_config.lead.resolve_model(lead_backend)
     lead_id = team_config.lead.agent_id
+
+    lead_worktree = None
+    lead_working_dir = None
+    if worktree:
+        wt_path = _create_agent_worktree(repo_path, team_id, lead_id)
+        if wt_path is not None:
+            lead_worktree = str(wt_path)
+            lead_working_dir = str(wt_path)
 
     worker_list = "\n".join(
         f"- {a.agent_id} (role={a.role}, name={a.name})" for a in team_config.agents
@@ -119,6 +138,8 @@ def create_team_from_config(
         model=lead_model,
         auto_approve=auto_approve,
         config=config,
+        worktree=lead_worktree,
+        working_dir=lead_working_dir,
     )
 
     process_manager.deliver_all_deferred_prompts()
