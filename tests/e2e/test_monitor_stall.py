@@ -42,6 +42,14 @@ class TestE2E006_WorkerDiesMidTask:
         sd = StallDetector(mock_pm, mock_hb)
         mock_hb._states = {"w1": MagicMock()}
 
+        # Grace period: first checks return None (startup tolerance)
+        for _ in range(3):
+            event = sd.check_agent("w1")
+            assert event is None, "Should be within startup grace period"
+
+        # Backdate first_seen so grace period expires
+        sd._first_seen["w1"] -= 200
+
         event = sd.check_agent("w1")
         assert event is not None
         assert event.state == AgentState.DEAD

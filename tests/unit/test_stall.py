@@ -51,10 +51,17 @@ class TestStallDetector:
         hm.check.return_value = MagicMock()
 
         sd = StallDetector(pm, hm)
-        # Startup grace period skips the first few checks within 60s.
-        # Simulate enough consecutive dead checks to exceed the threshold.
         from phalanx.monitor.stall import STARTUP_DEAD_THRESHOLD
 
+        # Within grace period: all checks return None regardless of count
+        for _ in range(STARTUP_DEAD_THRESHOLD + 1):
+            assert sd.check_agent("a1") is None
+
+        # Backdate first_seen so grace period expires
+        sd._first_seen["a1"] -= 200
+        sd._consecutive_dead["a1"] = 0
+
+        # Now need STARTUP_DEAD_THRESHOLD consecutive dead checks
         for _ in range(STARTUP_DEAD_THRESHOLD - 1):
             assert sd.check_agent("a1") is None
         event = sd.check_agent("a1")

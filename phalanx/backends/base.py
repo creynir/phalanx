@@ -73,6 +73,32 @@ class AgentBackend(ABC):
         """List of tmux keys to send to interrupt the agent and return to prompt."""
         return ["C-c", "C-c"]
 
+    def deferred_prompt(self) -> bool:
+        """Whether the prompt should be sent after TUI initialization.
+
+        When True, the agent is started without a prompt, the manager
+        polls for tui_ready_indicator(), then sends the prompt into
+        the TUI input. This avoids race conditions where the agent
+        tries to execute commands before auto-approve is active.
+        """
+        return False
+
+    def tui_ready_indicator(self) -> str:
+        """String to look for in tmux pane output indicating TUI is ready.
+
+        Used when deferred_prompt() is True. The manager polls the pane
+        every 500ms until this string appears or timeout is reached.
+        """
+        return ""
+
+    def format_deferred_prompt(self, prompt: str) -> str:
+        """Format the prompt text for deferred delivery into the TUI input.
+
+        Called when deferred_prompt() is True. The default returns the
+        prompt as-is; backends can override to add file-read instructions.
+        """
+        return prompt
+
     def auto_run_keys(self) -> list[str]:
         """Tmux key sequences to send after TUI starts to enable auto-run.
 

@@ -76,7 +76,8 @@ def create_team_from_config(
 
     worker_ids = []
     for agent_spec in team_config.agents:
-        model = agent_spec.resolve_model(backend_name)
+        effective_backend = agent_spec.backend or backend_name
+        model = agent_spec.resolve_model(effective_backend)
 
         spawn_agent(
             phalanx_root=phalanx_root,
@@ -87,7 +88,7 @@ def create_team_from_config(
             task=agent_spec.prompt,
             role=agent_spec.role,
             agent_id=agent_spec.agent_id,
-            backend_name=backend_name,
+            backend_name=effective_backend,
             model=model,
             worktree=agent_spec.worktree,
             working_dir=agent_spec.worktree,
@@ -96,7 +97,8 @@ def create_team_from_config(
         )
         worker_ids.append(agent_spec.agent_id)
 
-    lead_model = team_config.lead.resolve_model(backend_name)
+    lead_backend = team_config.lead.backend or backend_name
+    lead_model = team_config.lead.resolve_model(lead_backend)
     lead_id = team_config.lead.agent_id
 
     worker_list = "\n".join(
@@ -113,11 +115,13 @@ def create_team_from_config(
         task=lead_task,
         role="lead",
         agent_id=lead_id,
-        backend_name=backend_name,
+        backend_name=lead_backend,
         model=lead_model,
         auto_approve=auto_approve,
         config=config,
     )
+
+    process_manager.deliver_all_deferred_prompts()
 
     _spawn_team_monitor(phalanx_root, team_id, idle_timeout=idle_timeout, max_runtime=max_runtime)
 
@@ -217,6 +221,8 @@ def create_team(
         worktree=lead_worktree,
         working_dir=lead_working_dir,
     )
+
+    process_manager.deliver_all_deferred_prompts()
 
     _spawn_team_monitor(phalanx_root, team_id, idle_timeout=idle_timeout, max_runtime=max_runtime)
 

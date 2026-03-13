@@ -75,6 +75,7 @@ class AgentSpec:
     prompt: str
     model: str | None = None
     worktree: str | None = None
+    backend: str | None = None
 
     # Generated at creation time
     agent_id: str = ""
@@ -102,6 +103,7 @@ class AgentSpec:
             "prompt": self.prompt,
             "model": self.model,
             "worktree": self.worktree,
+            "backend": self.backend,
             "agent_id": self.agent_id,
         }
 
@@ -112,6 +114,7 @@ class LeadSpec:
 
     name: str = "team-lead"
     model: str | None = None
+    backend: str | None = None
 
     agent_id: str = ""
 
@@ -126,6 +129,7 @@ class LeadSpec:
         return {
             "name": self.name,
             "model": self.model,
+            "backend": self.backend,
             "agent_id": self.agent_id,
         }
 
@@ -169,6 +173,7 @@ def parse_team_config(data: dict) -> TeamConfig:
     lead = LeadSpec(
         name=lead_data.get("name", "team-lead"),
         model=lead_data.get("model"),
+        backend=lead_data.get("backend"),
     )
 
     agents = []
@@ -180,10 +185,42 @@ def parse_team_config(data: dict) -> TeamConfig:
                 prompt=agent_data["prompt"],
                 model=agent_data.get("model"),
                 worktree=agent_data.get("worktree"),
+                backend=agent_data.get("backend"),
             )
         )
 
     return TeamConfig(task=task, agents=agents, lead=lead)
+
+
+def validate_team_models(team_config: TeamConfig, default_backend: str) -> None:
+    """Validate all model names against their respective backends.
+
+    Raises ValueError with a clear message if any model is invalid.
+    """
+    from phalanx.backends import get_backend
+
+    for agent in team_config.agents:
+        be = agent.backend or default_backend
+        backend = get_backend(be)
+        valid = set(backend.available_models())
+        model = agent.resolve_model(be)
+        if model not in valid:
+            raise ValueError(
+                f"Agent '{agent.name}' (role={agent.role}): model '{model}' "
+                f"not valid for backend '{be}'. "
+                f"Available: {', '.join(sorted(valid))}"
+            )
+
+    lead_be = team_config.lead.backend or default_backend
+    lead_backend = get_backend(lead_be)
+    valid = set(lead_backend.available_models())
+    lead_model = team_config.lead.resolve_model(lead_be)
+    if lead_model not in valid:
+        raise ValueError(
+            f"Lead '{team_config.lead.name}': model '{lead_model}' "
+            f"not valid for backend '{lead_be}'. "
+            f"Available: {', '.join(sorted(valid))}"
+        )
 
 
 def load_team_config(path: Path) -> TeamConfig:

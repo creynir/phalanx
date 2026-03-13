@@ -76,6 +76,7 @@ class AgentProcess:
     backend: AgentBackend
     chat_id: str | None = None
     _session: libtmux.Session | None = field(default=None, repr=False)
+    _pending_prompt: str | None = field(default=None, repr=False)
 
     @property
     def pane(self) -> libtmux.Pane | None:
@@ -244,7 +245,7 @@ class ProcessManager:
         pane = session.active_window.active_pane
         self._setup_agent_env(pane, agent_id, team_id)
 
-        # Build the TUI command (no --print)
+        # Build the TUI command
         cmd_parts = backend.build_start_command(
             prompt=prompt,
             soul_file=soul_file,
@@ -253,16 +254,11 @@ class ProcessManager:
         )
 
         if auto_approve:
-            approve_flags = backend.auto_approve_flags()
-            for flag in approve_flags:
-                if flag not in cmd_parts:
-                    cmd_parts.insert(1, flag)
+            approve_flags = [f for f in backend.auto_approve_flags() if f not in cmd_parts]
+            cmd_parts[1:1] = approve_flags
 
         cmd_str = shlex.join(cmd_parts)
         pane.send_keys(cmd_str, enter=True, literal=True)
-
-        if auto_approve:
-            self._send_auto_run_keys(pane, backend, agent_id)
 
         agent_proc = AgentProcess(
             agent_id=agent_id,
@@ -274,12 +270,62 @@ class ProcessManager:
         )
         self._processes[agent_id] = agent_proc
 
+        if backend.deferred_prompt():
+            agent_proc._pending_prompt = prompt
+        else:
+            if auto_approve:
+                self._send_auto_run_keys(pane, backend, agent_id)
+
         logger.info(
             "Spawned agent %s in tmux session %s (TUI mode)",
             agent_id,
             session_name,
         )
         return agent_proc
+
+    def deliver_deferred_prompt(self, agent_id: str) -> None:
+        """Wait for TUI readiness and send the deferred prompt.
+
+        Called after spawn() for backends with deferred_prompt=True.
+        Thread-safe — each call operates on its own agent's pane.
+        """
+        agent_proc = self._processes.get(agent_id)
+        if not agent_proc or not agent_proc._pending_prompt:
+            return
+
+        pane = agent_proc.pane
+        if not pane:
+            logger.warning("No pane found for agent %s, cannot deliver prompt", agent_id)
+            return
+
+        self._wait_for_tui(pane, agent_proc.backend, agent_id)
+        deferred_text = agent_proc.backend.format_deferred_prompt(agent_proc._pending_prompt)
+        pane.send_keys(deferred_text, enter=False, literal=True)
+        time.sleep(0.3)
+        pane.send_keys("Enter", enter=False)
+        agent_proc._pending_prompt = None
+        logger.info("Delivered deferred prompt to agent %s", agent_id)
+
+    def deliver_all_deferred_prompts(self) -> None:
+        """Deliver deferred prompts to all pending agents in parallel."""
+        pending = [aid for aid, proc in self._processes.items() if proc._pending_prompt]
+        if not pending:
+            return
+        if len(pending) == 1:
+            self.deliver_deferred_prompt(pending[0])
+            return
+
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        logger.info("Delivering deferred prompts to %d agents in parallel", len(pending))
+        with ThreadPoolExecutor(max_workers=len(pending)) as pool:
+            futures = {pool.submit(self.deliver_deferred_prompt, aid): aid for aid in pending}
+            for future in as_completed(futures):
+                aid = futures[future]
+                try:
+                    future.result()
+                except Exception:
+                    logger.exception("Failed to deliver prompt to %s", aid)
 
     def spawn_resume(
         self,
@@ -314,10 +360,8 @@ class ProcessManager:
         cmd_parts = backend.build_resume_command(chat_id)
 
         if auto_approve:
-            approve_flags = backend.auto_approve_flags()
-            for flag in approve_flags:
-                if flag not in cmd_parts:
-                    cmd_parts.insert(1, flag)
+            approve_flags = [f for f in backend.auto_approve_flags() if f not in cmd_parts]
+            cmd_parts[1:1] = approve_flags
 
         cmd_str = shlex.join(cmd_parts)
         pane.send_keys(cmd_str, enter=True, literal=True)
@@ -507,6 +551,41 @@ class ProcessManager:
         return dict(self._processes)
 
     # --- internal ---
+
+    def _wait_for_tui(
+        self,
+        pane: libtmux.Pane,
+        backend: AgentBackend,
+        agent_id: str,
+        timeout: float = 15.0,
+        poll_interval: float = 0.5,
+    ) -> None:
+        """Poll tmux pane until the TUI ready indicator appears or timeout."""
+        indicator = backend.tui_ready_indicator()
+        if not indicator:
+            time.sleep(3.0)
+            return
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            try:
+                lines = pane.capture_pane()
+                content = "\n".join(lines) if isinstance(lines, list) else str(lines)
+                if indicator in content:
+                    logger.debug(
+                        "TUI ready indicator %r found for agent %s",
+                        indicator,
+                        agent_id,
+                    )
+                    return
+            except Exception as e:
+                logger.debug("Error polling TUI for %s: %s", agent_id, e)
+            time.sleep(poll_interval)
+        logger.warning(
+            "TUI ready indicator %r not found for agent %s after %.1fs, proceeding anyway",
+            indicator,
+            agent_id,
+            timeout,
+        )
 
     def _send_auto_run_keys(self, pane: libtmux.Pane, backend: AgentBackend, agent_id: str) -> None:
         """Send backend-specific keystrokes to enable auto-run after TUI starts."""

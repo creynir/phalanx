@@ -33,7 +33,7 @@ IDLE_TIMEOUT_SECONDS = 1800  # 30 minutes
 SCREEN_CHECK_INTERVAL = 20  # seconds between screen scrapes
 MAX_RETRY_BACKOFF = 300  # max 5 minutes between retries
 IDLE_NUDGE_COOLDOWN = 60  # seconds between repeated agent_idle detections
-STARTUP_GRACE_SECONDS = 60  # ignore DEAD during TUI cold-start
+STARTUP_GRACE_SECONDS = 120  # ignore DEAD during TUI cold-start
 STARTUP_DEAD_THRESHOLD = 3  # consecutive DEAD checks before confirming
 
 
@@ -304,7 +304,7 @@ class StallDetector:
             consecutive = self._consecutive_dead.get(agent_id, 0) + 1
             self._consecutive_dead[agent_id] = consecutive
 
-            if age < STARTUP_GRACE_SECONDS and consecutive < STARTUP_DEAD_THRESHOLD:
+            if age < STARTUP_GRACE_SECONDS or consecutive < STARTUP_DEAD_THRESHOLD:
                 logger.debug(
                     "Agent %s looks dead but within startup grace (%ds, check %d/%d) — skipping",
                     agent_id,

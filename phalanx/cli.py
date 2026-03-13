@@ -206,10 +206,11 @@ def create_team_cmd(
     hb = HeartbeatMonitor(idle_timeout=effective_idle)
 
     if config_path:
-        from phalanx.team.config import load_team_config
+        from phalanx.team.config import load_team_config, validate_team_models
         from phalanx.team.create import create_team_from_config
 
         team_config = load_team_config(Path(config_path))
+        validate_team_models(team_config, backend_name)
         team_id, lead_id, worker_ids = create_team_from_config(
             phalanx_root=root,
             db=db,

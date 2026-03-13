@@ -36,9 +36,10 @@ class TestCursorBackend:
     def test_interactive_basic(self):
         cmd = self.b.build_start_command("fix bug")
         assert cmd[0].endswith("agent")
-        # Non-path strings are passed inline (not as @file reference)
-        assert "fix bug" in cmd
-        assert "--trust" not in cmd
+        # Cursor uses deferred prompt — prompt is NOT in the start command
+        assert "fix bug" not in cmd
+        assert self.b.deferred_prompt() is True
+        assert self.b.format_deferred_prompt("fix bug") == "fix bug"
 
     def test_interactive_with_model_and_worktree(self):
         cmd = self.b.build_start_command("task", model="opus-4.6", worktree="feat-x")
@@ -51,22 +52,24 @@ class TestCursorBackend:
         task_file = tmp_path / "task.md"
         task_file.write_text("Do the thing now.")
         cmd = self.b.build_start_command(str(task_file))
-        # File content is now passed via an instruction, not inlined
-        assert any("Read and execute instructions from" in c for c in cmd)
-        assert any(str(task_file.absolute()) in c for c in cmd)
-        assert "Do the thing now." not in cmd
+        # Cursor deferred prompt: build_start_command has no prompt
+        assert not any("Read and execute" in c for c in cmd)
+        # format_deferred_prompt transforms file paths into read instructions
+        deferred = self.b.format_deferred_prompt(str(task_file))
+        assert "Read and execute instructions from" in deferred
+        assert str(task_file.absolute()) in deferred
 
     def test_prompt_with_soul_file(self, tmp_path):
         soul = tmp_path / "soul.md"
         soul.write_text("instructions")
         task_file = tmp_path / "task.md"
         task_file.write_text("Do the thing now.")
-        # soul_file is now merged into task by spawn.py before build_start_command
-        # is called with soul_file=None, so this tests legacy path
         cmd = self.b.build_start_command(str(task_file), soul_file=None)
-        assert any("Read and execute instructions from" in c for c in cmd)
-        assert any(str(task_file.absolute()) in c for c in cmd)
-        assert "Do the thing now." not in cmd
+        # Deferred prompt: command has no prompt, file reference is in format_deferred_prompt
+        assert not any("Read and execute" in c for c in cmd)
+        deferred = self.b.format_deferred_prompt(str(task_file))
+        assert "Read and execute instructions from" in deferred
+        assert str(task_file.absolute()) in deferred
 
     def test_headless_manual_approve(self):
         cmd = self.b.build_start_command("task", auto_approve=False)

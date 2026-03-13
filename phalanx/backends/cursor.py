@@ -33,15 +33,13 @@ class CursorBackend(AgentBackend):
             cmd += ["--model", model]
         if worktree:
             cmd += ["--worktree", worktree]
-        # For Cursor TUI, passing a massive inline string with newlines
-        # via tmux send-keys causes shell buffer corruption.
-        # Instead, we pass a short instruction to read the file.
+        return cmd
+
+    def format_deferred_prompt(self, prompt: str) -> str:
         prompt_path = Path(prompt)
         if prompt_path.exists():
-            cmd.append(f"Read and execute instructions from {prompt_path.absolute()}")
-        else:
-            cmd.append(prompt)
-        return cmd
+            return f"Read and execute instructions from {prompt_path.absolute()}"
+        return prompt
 
     def build_resume_command(self, chat_id: str) -> list[str]:
         return [self.binary_name(), "--resume", chat_id]
@@ -62,25 +60,28 @@ class CursorBackend(AgentBackend):
 
     def available_models(self) -> list[str]:
         return [
-            "claude-sonnet-4-20250514",
-            "gpt-4.1",
-            "gemini-2.5-pro",
+            "sonnet-4.6",
+            "sonnet-4.6-thinking",
+            "opus-4.6",
+            "opus-4.6-thinking",
+            "gemini-3.1-pro",
+            "gemini-3-pro",
+            "gemini-3-flash",
+            "gpt-5.4-high",
+            "gpt-5.2",
             "o3",
+            "grok",
+            "kimi-k2.5",
         ]
 
     def auto_approve_flags(self) -> list[str]:
         return ["--yolo"]
 
-    def auto_run_keys(self) -> list[str]:
-        return ["BTab"]
+    def deferred_prompt(self) -> bool:
+        return True
 
-    def auto_run_delay(self) -> float:
-        import os
-
-        env_val = os.environ.get("PHALANX_CURSOR_AUTO_RUN_DELAY")
-        if env_val is not None:
-            return float(env_val)
-        return 8.0
+    def tui_ready_indicator(self) -> str:
+        return "/ commands"
 
     def spawn_delay(self) -> float:
         # Cursor agent processes share ~/.cursor/cli-config.json and race to
