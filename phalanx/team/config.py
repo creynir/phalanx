@@ -41,18 +41,36 @@ DEFAULT_MODELS: dict[str, dict[str, str]] = {
         "lead": "gemini-2.5-pro",
     },
     "codex": {
-        "default": "o3",
-        "researcher": "o4-mini",
-        "coder": "o3",
-        "reviewer": "o3",
-        "architect": "o3",
-        "lead": "o3",
+        "default": "gpt-5.4",
+        "researcher": "gpt-5.4",
+        "coder": "gpt-5.4",
+        "reviewer": "gpt-5.4",
+        "architect": "gpt-5.4",
+        "lead": "gpt-5.4",
     },
 }
 
 
 def _gen_id(name: str) -> str:
     return f"{name}-{uuid.uuid4().hex[:8]}"
+
+
+def resolve_backend_for_role(
+    role: str,
+    default_backend: str,
+    backend_overrides: dict[str, str] | None = None,
+) -> str:
+    """Resolve backend for a role using optional overrides.
+
+    Priority: role override > generic worker override (for worker roles)
+    > default backend.
+    """
+    overrides = backend_overrides or {}
+    if role in overrides and overrides[role]:
+        return overrides[role]
+    if role in VALID_ROLES and overrides.get("worker"):
+        return overrides["worker"]
+    return default_backend
 
 
 def resolve_model(backend: str, role: str, explicit_model: str | None = None) -> str:
@@ -192,35 +210,29 @@ def parse_team_config(data: dict) -> TeamConfig:
     return TeamConfig(task=task, agents=agents, lead=lead)
 
 
-def validate_team_models(team_config: TeamConfig, default_backend: str) -> None:
-    """Validate all model names against their respective backends.
+def validate_team_models(
+    team_config: TeamConfig,
+    default_backend: str,
+    backend_overrides: dict[str, str] | None = None,
+) -> None:
+    """Validate backend identity for team members.
 
-    Raises ValueError with a clear message if any model is invalid.
+    Model-name validation is intentionally skipped: model compatibility and
+    fallback behavior are delegated to the backend CLI at runtime.
     """
     from phalanx.backends import get_backend
 
     for agent in team_config.agents:
-        be = agent.backend or default_backend
-        backend = get_backend(be)
-        valid = set(backend.available_models())
-        model = agent.resolve_model(be)
-        if model not in valid:
-            raise ValueError(
-                f"Agent '{agent.name}' (role={agent.role}): model '{model}' "
-                f"not valid for backend '{be}'. "
-                f"Available: {', '.join(sorted(valid))}"
-            )
-
-    lead_be = team_config.lead.backend or default_backend
-    lead_backend = get_backend(lead_be)
-    valid = set(lead_backend.available_models())
-    lead_model = team_config.lead.resolve_model(lead_be)
-    if lead_model not in valid:
-        raise ValueError(
-            f"Lead '{team_config.lead.name}': model '{lead_model}' "
-            f"not valid for backend '{lead_be}'. "
-            f"Available: {', '.join(sorted(valid))}"
+        be = agent.backend or resolve_backend_for_role(
+            agent.role, default_backend, backend_overrides
         )
+        # Keep backend validation so unknown backend names fail early.
+        get_backend(be)
+
+    lead_be = team_config.lead.backend or resolve_backend_for_role(
+        "lead", default_backend, backend_overrides
+    )
+    get_backend(lead_be)
 
 
 def load_team_config(path: Path) -> TeamConfig:

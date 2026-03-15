@@ -57,6 +57,7 @@ class CodexBackend(AgentBackend):
 
     def available_models(self) -> list[str]:
         return [
+            "gpt-5.4",
             "o3",
             "o4-mini",
             "gpt-4.1",

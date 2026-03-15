@@ -29,6 +29,11 @@ When you receive `[PHALANX EVENT] worker_blocked: worker <id>`:
 1. Run `phalanx agent-status <id>` to read the prompt screen.
 2. Send a targeted nudge: `phalanx message-agent <id> "Continue your task. Complete it and write your artifact."`.
 
+When you receive `[PHALANX EVENT] startup_blocked: worker <id>`:
+1. Run `phalanx resume-agent <id> --reply 1` (startup selectors are often numeric).
+2. Then run `phalanx message-agent <id> "Continue your assigned task and write artifact."`.
+3. Re-check with `phalanx agent-status <id>`.
+
 When you receive `[PHALANX EVENT] worker_dead: worker <id>` or `worker_timeout: worker <id>`:
 1. Run `phalanx agent-status <id>` to assess.
 2. Try to restart: `phalanx resume-agent <id>`. If it succeeds, continue waiting.

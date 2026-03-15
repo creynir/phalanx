@@ -13,6 +13,7 @@ Phase 3 design:
 from __future__ import annotations
 
 import logging
+import json
 import shlex
 import subprocess
 import sys
@@ -190,6 +191,11 @@ class ProcessManager:
         agent_dir.mkdir(parents=True, exist_ok=True)
         return agent_dir / "stream.log"
 
+    def _startup_block_path(self, team_id: str, agent_id: str) -> Path:
+        agent_dir = self._root / "teams" / team_id / "agents" / agent_id
+        agent_dir.mkdir(parents=True, exist_ok=True)
+        return agent_dir / "startup_blocked.json"
+
     def spawn(
         self,
         team_id: str,
@@ -269,6 +275,8 @@ class ProcessManager:
             _session=session,
         )
         self._processes[agent_id] = agent_proc
+        self._resolve_startup_prompts(pane, backend, agent_id)
+        self._detect_startup_blocked(pane, backend, team_id, agent_id, stream_log)
 
         if backend.deferred_prompt():
             agent_proc._pending_prompt = prompt
@@ -365,6 +373,8 @@ class ProcessManager:
 
         cmd_str = shlex.join(cmd_parts)
         pane.send_keys(cmd_str, enter=True, literal=True)
+        self._resolve_startup_prompts(pane, backend, agent_id)
+        self._detect_startup_blocked(pane, backend, team_id, agent_id, stream_log)
 
         if auto_approve:
             self._send_auto_run_keys(pane, backend, agent_id)
@@ -550,6 +560,21 @@ class ProcessManager:
     def list_processes(self) -> dict[str, AgentProcess]:
         return dict(self._processes)
 
+    def consume_startup_blocked(self, team_id: str, agent_id: str) -> dict | None:
+        """Return and delete a persisted startup-blocked marker, if present."""
+        path = self._startup_block_path(team_id, agent_id)
+        if not path.exists():
+            return None
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            data = None
+        try:
+            path.unlink(missing_ok=True)
+        except Exception:
+            pass
+        return data
+
     # --- internal ---
 
     def _wait_for_tui(
@@ -586,6 +611,140 @@ class ProcessManager:
             agent_id,
             timeout,
         )
+
+    def _resolve_startup_prompts(
+        self,
+        pane: libtmux.Pane,
+        backend: AgentBackend,
+        agent_id: str,
+        timeout: float = 12.0,
+        poll_interval: float = 0.25,
+    ) -> None:
+        """Resolve known startup prompts that can block unattended launches.
+
+        For Codex, this handles the workspace trust screen by selecting
+        "1. Yes, continue" only after that exact prompt is visible.
+        """
+        try:
+            backend_name = backend.name().lower()
+        except Exception:
+            backend_name = ""
+
+        if backend_name != "codex":
+            return
+
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            try:
+                lines = pane.capture_pane() or []
+                text = "\n".join(lines[-40:])
+            except Exception:
+                time.sleep(poll_interval)
+                continue
+
+            has_trust_prompt = (
+                "Do you trust the contents of this directory?" in text
+                and ("Yes, continue" in text or "Press enter to continue" in text)
+            )
+            if has_trust_prompt:
+                pane.send_keys("1", enter=True)
+                logger.info("Auto-accepted Codex workspace trust prompt for agent %s", agent_id)
+                return
+
+            # Stop polling once Codex reaches its normal prompt state.
+            if "OpenAI Codex" in text and "? for shortcuts" in text:
+                return
+
+            time.sleep(poll_interval)
+
+    def _detect_startup_blocked(
+        self,
+        pane: libtmux.Pane,
+        backend: AgentBackend,
+        team_id: str,
+        agent_id: str,
+        stream_log: Path,
+        timeout: float = 20.0,
+        poll_interval: float = 0.5,
+    ) -> None:
+        """Detect startup blockers and persist a marker for the monitor loop.
+
+        This is intentionally conservative: it records only high-confidence
+        startup blockers (e.g., login/account selection screens), and does
+        not auto-send keys.
+        """
+        blocker_patterns = (
+            "select login method",
+            "login method",
+            "sign in",
+            "authenticate",
+            "subscription",
+            "api usage billing",
+            "console account",
+            "warning: claude code running in bypass permissions mode",
+            "bypass permissions mode",
+        )
+        progress_patterns = (
+            "phalanx write-artifact",
+            "artifact written",
+            "task completed",
+            "read and execute instructions from",
+            "lock acquired",
+            "phalanx agent-result",
+            "phalanx resume-agent",
+        )
+        idle_prompt_patterns = (
+            "❯",
+            "? for shortcuts",
+            "→ add a follow-up",
+            "/ commands · @",
+        )
+
+        # Cursor uses deferred prompt delivery; seeing its idle prompt during
+        # startup is expected and should not be classified as blocked.
+        if backend.deferred_prompt():
+            return
+
+        no_progress_polls = 0
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            try:
+                lines = pane.capture_pane() or []
+            except Exception:
+                time.sleep(poll_interval)
+                continue
+
+            text = "\n".join(lines[-60:])
+            lower = text.lower()
+
+            has_progress = any(p in lower for p in progress_patterns)
+            has_blocker = any(p in lower for p in blocker_patterns)
+            has_idle_prompt = any(p in lower for p in idle_prompt_patterns)
+
+            if not has_progress and (has_blocker or has_idle_prompt):
+                no_progress_polls += 1
+            else:
+                no_progress_polls = 0
+
+            if no_progress_polls >= 3:
+                payload = {
+                    "type": "startup_blocked",
+                    "team_id": team_id,
+                    "agent_id": agent_id,
+                    "backend": backend.name(),
+                    "prompt_excerpt": text[-1200:],
+                    "created_at": time.time(),
+                }
+                path = self._startup_block_path(team_id, agent_id)
+                path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+                logger.warning(
+                    "Detected startup_blocked for %s (backend=%s)",
+                    agent_id,
+                    backend.name(),
+                )
+                return
+
+            time.sleep(poll_interval)
 
     def _send_auto_run_keys(self, pane: libtmux.Pane, backend: AgentBackend, agent_id: str) -> None:
         """Send backend-specific keystrokes to enable auto-run after TUI starts."""

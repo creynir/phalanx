@@ -189,6 +189,7 @@ class TestCostScannerInMonitorLoop:
 
         pm = MagicMock()
         pm.get_process.return_value = proc
+        pm.consume_startup_blocked.return_value = None
         hb = MagicMock()
         hb.get_state.return_value = MagicMock(last_heartbeat=0.0)
         hb.check.return_value = MagicMock(last_heartbeat=1.0)

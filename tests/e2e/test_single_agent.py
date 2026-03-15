@@ -6,6 +6,8 @@ import subprocess
 
 import pytest
 
+from phalanx import __version__
+
 
 pytestmark = pytest.mark.e2e
 
@@ -19,7 +21,7 @@ class TestSingleAgent:
             timeout=10,
         )
         assert result.returncode == 0
-        assert "0.3" in result.stdout
+        assert __version__ in result.stdout
 
     def test_phalanx_help(self):
         result = subprocess.run(

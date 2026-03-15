@@ -13,7 +13,7 @@ from phalanx.config import PhalanxConfig
 from phalanx.db import StateDB
 from phalanx.monitor.heartbeat import HeartbeatMonitor
 from phalanx.process.manager import ProcessManager
-from phalanx.team.config import TeamConfig, resolve_model
+from phalanx.team.config import TeamConfig, resolve_backend_for_role, resolve_model
 from phalanx.team.spawn import spawn_agent
 
 logger = logging.getLogger(__name__)
@@ -54,7 +54,7 @@ def create_team_from_config(
     process_manager: ProcessManager,
     heartbeat_monitor: HeartbeatMonitor,
     team_config: TeamConfig,
-    backend_name: str = "cursor",
+    backend_name: str = "codex",
     auto_approve: bool = False,
     config: PhalanxConfig | None = None,
     idle_timeout: int = 1800,
@@ -69,7 +69,9 @@ def create_team_from_config(
 
     team_config.generate_ids()
 
-    db.create_team(team_id, team_config.task, config=team_config.to_dict())
+    team_db_config = team_config.to_dict()
+    team_db_config["auto_approve"] = auto_approve
+    db.create_team(team_id, team_config.task, config=team_db_config)
 
     team_dir = phalanx_root / "teams" / team_id
     team_dir.mkdir(parents=True, exist_ok=True)
@@ -79,7 +81,11 @@ def create_team_from_config(
 
     worker_ids = []
     for agent_spec in team_config.agents:
-        effective_backend = agent_spec.backend or backend_name
+        effective_backend = agent_spec.backend or resolve_backend_for_role(
+            agent_spec.role,
+            backend_name,
+            config.backend_overrides if config else None,
+        )
         model = agent_spec.resolve_model(effective_backend)
 
         worker_worktree = agent_spec.worktree
@@ -108,7 +114,11 @@ def create_team_from_config(
         )
         worker_ids.append(agent_spec.agent_id)
 
-    lead_backend = team_config.lead.backend or backend_name
+    lead_backend = team_config.lead.backend or resolve_backend_for_role(
+        "lead",
+        backend_name,
+        config.backend_overrides if config else None,
+    )
     lead_model = team_config.lead.resolve_model(lead_backend)
     lead_id = team_config.lead.agent_id
 
@@ -162,7 +172,7 @@ def create_team(
     heartbeat_monitor: HeartbeatMonitor,
     task: str,
     agents_spec: str = "coder",
-    backend_name: str = "cursor",
+    backend_name: str = "codex",
     model: str | None = None,
     auto_approve: bool = False,
     config: PhalanxConfig | None = None,
@@ -180,6 +190,7 @@ def create_team(
     team_config_data = {}
     if config:
         team_config_data = config.to_dict()
+    team_config_data["auto_approve"] = auto_approve
     db.create_team(team_id, task, config=team_config_data)
 
     team_dir = phalanx_root / "teams" / team_id
@@ -192,7 +203,12 @@ def create_team(
     for role, count in worker_specs:
         for _ in range(count):
             worker_id = f"w{worker_index}-{role}-{uuid.uuid4().hex[:8]}"
-            resolved_model = resolve_model(backend_name, role, model)
+            effective_backend = resolve_backend_for_role(
+                role,
+                backend_name,
+                config.backend_overrides if config else None,
+            )
+            resolved_model = resolve_model(effective_backend, role, model)
             worker_worktree: str | None = None
             worker_working_dir: str | None = None
             if worktree:
@@ -209,7 +225,7 @@ def create_team(
                 task=task,
                 role=role,
                 agent_id=worker_id,
-                backend_name=backend_name,
+                backend_name=effective_backend,
                 model=resolved_model,
                 auto_approve=auto_approve,
                 config=config,
@@ -218,7 +234,12 @@ def create_team(
             )
             worker_index += 1
 
-    lead_model = resolve_model(backend_name, "lead", model)
+    lead_backend = resolve_backend_for_role(
+        "lead",
+        backend_name,
+        config.backend_overrides if config else None,
+    )
+    lead_model = resolve_model(lead_backend, "lead", model)
     lead_worktree: str | None = None
     lead_working_dir: str | None = None
     if worktree:
@@ -235,7 +256,7 @@ def create_team(
         task=task,
         role="lead",
         agent_id=lead_id,
-        backend_name=backend_name,
+        backend_name=lead_backend,
         model=lead_model,
         auto_approve=auto_approve,
         config=config,

@@ -8,6 +8,7 @@ import pytest
 from click.testing import CliRunner
 
 from phalanx.cli import cli
+from phalanx import __version__
 
 
 pytestmark = pytest.mark.integration
@@ -22,7 +23,7 @@ class TestVersion:
     def test_version(self, runner):
         result = runner.invoke(cli, ["--version"])
         assert result.exit_code == 0
-        assert "0.3" in result.output
+        assert __version__ in result.output
 
 
 class TestHelp:

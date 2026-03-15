@@ -34,7 +34,10 @@ class ContinualLearningConfig:
 class PhalanxConfig:
     """Runtime configuration."""
 
-    default_backend: str = "cursor"
+    default_backend: str = "codex"
+    # Optional per-role backend overrides. Keys: lead, engineering_manager,
+    # researcher, coder, reviewer, architect, worker.
+    backend_overrides: dict[str, str] | None = None
     default_model: str | None = None
     idle_timeout_seconds: int = 1800  # 30 minutes
     max_runtime_seconds: int = 1800  # 30 minutes

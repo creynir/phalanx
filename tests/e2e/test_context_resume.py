@@ -143,6 +143,7 @@ class TestE2E021_MonitorRediscovery:
 
         mock_pm = MagicMock()
         mock_pm.get_process.return_value = None
+        mock_pm.consume_startup_blocked.return_value = None
         mock_proc = MagicMock()
         mock_proc.stream_log = Path("/tmp/stream.log")
         mock_pm.discover_agent.return_value = mock_proc

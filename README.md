@@ -14,10 +14,27 @@ uv tool install phalanx-cli
 
 Requires: Python 3.11+, tmux, git.
 
+## Backend Authentication (Required)
+
+Before using Phalanx, authenticate each backend CLI you plan to run.
+Phalanx can spawn agents non-interactively, so first-run login prompts inside
+tmux can block teams if auth has not been completed beforehand.
+
+At minimum, run each backend once and finish its login flow:
+
+```bash
+agent
+claude
+gemini
+codex
+```
+
+Then re-run Phalanx.
+
 ## Quick Start
 
 ```bash
-phalanx --auto-approve --backend cursor --model opus-4.6-thinking
+phalanx --auto-approve --model gpt-5.4
 ```
 
 That's it. Phalanx installs its skill into your agent CLI, then launches it. You talk to your agent as usual:
@@ -135,7 +152,7 @@ Phalanx automatically selects the best model per role and backend. Configurable 
 
 ```json
 {
-  "default_backend": "cursor",
+  "default_backend": "codex",
   "idle_timeout_seconds": 1800,
   "max_runtime_seconds": 1800,
   "stall_check_interval": 20,

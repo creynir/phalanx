@@ -16,6 +16,7 @@ Responsibilities:
 from __future__ import annotations
 
 import logging
+import json
 import time
 from pathlib import Path
 
@@ -172,6 +173,38 @@ def run_team_monitor(
 
             agent_id = agent["id"]
             active_count += 1
+
+            # Consume startup-blocked markers emitted at spawn time.
+            startup_block = process_manager.consume_startup_blocked(team_id, agent_id)
+            if startup_block:
+                prompt_excerpt = startup_block.get("prompt_excerpt", "")
+                backend_name = startup_block.get("backend") or agent.get("backend") or "unknown"
+                auto_approve = _team_auto_approve(db, team_id)
+                db.update_agent(
+                    agent_id,
+                    status="blocked_on_prompt",
+                    prompt_state="startup_blocked",
+                    prompt_screen=prompt_excerpt[:500],
+                )
+                db.log_event(
+                    team_id,
+                    "startup_blocked",
+                    agent_id=agent_id,
+                    payload={"backend": backend_name},
+                )
+                if agent_id != lead_agent_id:
+                    _notify_lead(
+                        process_manager,
+                        lead_agent_id,
+                        message_dir,
+                        "startup_blocked",
+                        agent_id,
+                        detail=_startup_recovery_hint(
+                            agent_id, backend_name, prompt_excerpt, auto_approve
+                        ),
+                    )
+                # Skip the normal stall cycle this tick for this agent.
+                continue
 
             # Re-discover agents that were resumed externally (e.g., by
             # the team lead calling `phalanx resume-agent`).  After
@@ -359,6 +392,41 @@ def _notify_lead(
         deliver_message(process_manager, lead_agent_id, msg, message_dir)
     except Exception as e:
         logger.warning("Failed to notify lead %s: %s", lead_agent_id, e)
+
+
+def _startup_recovery_hint(
+    agent_id: str, backend_name: str, prompt_excerpt: str, auto_approve: bool
+) -> str:
+    """Build deterministic recovery hints for startup-blocked agents."""
+    excerpt = " ".join(prompt_excerpt.strip().split())
+    excerpt = excerpt[:160] + ("..." if len(excerpt) > 160 else "")
+    if auto_approve:
+        recovery = (
+            f"Try: phalanx resume-agent {agent_id} --reply 1, then "
+            f"phalanx message-agent {agent_id} \"Continue your assigned task and write artifact.\""
+        )
+    else:
+        recovery = (
+            f"auto_approve=false: first run phalanx agent-status {agent_id} to inspect prompt, "
+            f"then run phalanx resume-agent {agent_id} --reply <choice>, then "
+            f"phalanx message-agent {agent_id} \"Continue your assigned task and write artifact.\""
+        )
+    return f"backend={backend_name}; prompt_excerpt='{excerpt}'. {recovery}"
+
+
+def _team_auto_approve(db: StateDB, team_id: str) -> bool:
+    """Read effective auto_approve flag from team config in DB."""
+    try:
+        team = db.get_team(team_id)
+        if not team:
+            return False
+        raw = team.get("config")
+        if not raw:
+            return False
+        data = json.loads(raw)
+        return bool(data.get("auto_approve", False))
+    except Exception:
+        return False
 
 
 def _handle_ghost_or_crash(

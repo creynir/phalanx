@@ -15,7 +15,7 @@ from phalanx.config import (
 def test_load_default_config(tmp_path: Path):
     cfg = load_config(tmp_path)
     assert isinstance(cfg, PhalanxConfig)
-    assert cfg.default_backend == "cursor"
+    assert cfg.default_backend == "codex"
     assert cfg.idle_timeout_seconds == 1800
 
 
@@ -32,16 +32,32 @@ def test_load_custom_config(tmp_path: Path):
     assert cfg.idle_timeout_seconds == 60
 
 
+def test_load_backend_overrides(tmp_path: Path):
+    config_file = tmp_path / "config.json"
+    config_data = {
+        "default_backend": "cursor",
+        "backend_overrides": {"lead": "codex", "worker": "cursor"},
+    }
+    config_file.write_text(json.dumps(config_data))
+
+    cfg = load_config(tmp_path)
+    assert cfg.backend_overrides == {"lead": "codex", "worker": "cursor"}
+
+
 def test_load_invalid_config_falls_back_to_default(tmp_path: Path):
     config_file = tmp_path / "config.json"
     config_file.write_text("invalid json")
 
     cfg = load_config(tmp_path)
-    assert cfg.default_backend == "cursor"
+    assert cfg.default_backend == "codex"
 
 
 def test_save_config(tmp_path: Path):
-    cfg = PhalanxConfig(default_backend="gemini", idle_timeout_seconds=120)
+    cfg = PhalanxConfig(
+        default_backend="gemini",
+        idle_timeout_seconds=120,
+        backend_overrides={"lead": "codex"},
+    )
     save_config(tmp_path, cfg)
 
     config_file = tmp_path / "config.json"
@@ -50,6 +66,7 @@ def test_save_config(tmp_path: Path):
     data = json.loads(config_file.read_text())
     assert data["default_backend"] == "gemini"
     assert data["idle_timeout_seconds"] == 120
+    assert data["backend_overrides"]["lead"] == "codex"
 
 
 def test_from_dict_ignores_unknown_fields():

@@ -60,6 +60,7 @@ class CursorBackend(AgentBackend):
 
     def available_models(self) -> list[str]:
         return [
+            "composer-1.5",
             "sonnet-4.6",
             "sonnet-4.6-thinking",
             "opus-4.6",

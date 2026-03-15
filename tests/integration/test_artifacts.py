@@ -112,9 +112,9 @@ class TestIT057_ReadAgentResult:
 class TestIT058_ReadTeamResult:
     """IT-058: Recovers consolidated team lead output."""
 
-    def test_read_team_artifact(self, tmp_path):
-        from phalanx.artifacts.reader import read_team_artifact
+    def test_get_team_result_reads_lead_agent_artifact(self, tmp_path):
         from phalanx.db import StateDB
+        from phalanx.team.orchestrator import get_team_result
 
         db = StateDB(db_path=tmp_path / "state.db")
         db.create_team("t1", "task")
@@ -126,9 +126,10 @@ class TestIT058_ReadTeamResult:
         artifact_dir = tmp_path / "teams" / "t1" / "agents" / "lead-t1"
         write_artifact(artifact_dir, art)
 
-        result = read_team_artifact(tmp_path, "t1")
-        if result is not None:
-            assert result.status == "success"
+        result = get_team_result(tmp_path, "t1")
+        assert result is not None
+        assert result["status"] == "success"
+        assert result["output"]["consolidated"] is True
 
 
 # IT-059: moved to tests/future_backlog/test_integration_backlog.py

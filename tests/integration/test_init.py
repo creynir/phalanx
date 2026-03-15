@@ -60,7 +60,7 @@ class TestInitWorkspace:
         (tmp_path / ".cursor").mkdir()
         result = init_workspace(tmp_path)
         assert (tmp_path / ".phalanx").exists()
-        assert len(result["skills_created"]) > 0
+        assert result["skills_created"] == []
 
 
 class TestGlobalSkill:

@@ -83,6 +83,9 @@ class TestCursorBackend:
         assert "--resume" in cmd
         assert "abc-123" in cmd
 
+    def test_available_models_include_composer(self):
+        assert "composer-1.5" in self.b.available_models()
+
 
 class TestClaudeBackend:
     def setup_method(self):
@@ -164,6 +167,9 @@ class TestCodexBackend:
         cmd = self.b.build_resume_command("whatever")
         assert "--resume" in cmd
         assert "whatever" in cmd
+
+    def test_available_models_include_gpt_5_4(self):
+        assert "gpt-5.4" in self.b.available_models()
 
 
 class TestRegistry:

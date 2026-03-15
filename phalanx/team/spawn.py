@@ -31,7 +31,7 @@ def spawn_agent(
     task: str,
     role: str = "worker",
     agent_id: str | None = None,
-    backend_name: str = "cursor",
+    backend_name: str = "codex",
     model: str | None = None,
     worktree: str | None = None,
     working_dir: str | None = None,

@@ -597,6 +597,21 @@ def _kill_team_monitor(team_id: str) -> None:
 
 def get_team_result(phalanx_root: Path, team_id: str) -> dict | None:
     """Read the team lead's artifact."""
+    # Primary path: resolve actual lead agent id from DB and read its artifact
+    # from teams/<team>/agents/<lead-id>/artifact.json.
+    try:
+        db = StateDB(phalanx_root / "state.db")
+        agents = db.list_agents(team_id)
+        lead = next((a for a in agents if a.get("role") == "lead"), None)
+        if lead:
+            artifact = read_agent_artifact(phalanx_root, team_id, lead["id"])
+            if artifact:
+                return artifact.to_dict()
+    except Exception:
+        # Keep compatibility fallback below if DB lookup fails.
+        pass
+
+    # Backward compatibility: legacy location teams/<team>/lead/artifact.json.
     artifact = read_team_artifact(phalanx_root, team_id)
     if artifact:
         return artifact.to_dict()

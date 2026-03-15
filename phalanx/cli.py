@@ -85,7 +85,7 @@ def cli(ctx, root, json_mode, auto_approve, backend, model, verbose):
 
     Run without a subcommand to launch your agent with phalanx skills:
 
-      phalanx --auto-approve --backend cursor --model opus-4.6-thinking
+      phalanx --auto-approve --model gpt-5.4
     """
     ctx.ensure_object(dict)
     ctx.obj["root"] = root
@@ -191,8 +191,10 @@ def create_team_cmd(
     ctx, task, config_path, agents, backend, model, idle_timeout, max_runtime, worktree=False, auto_approve=False
 ):
     """Create a team with per-agent prompts (--config) or simple shared task."""
+    from phalanx.init_cmd import check_and_prompt_skill
     from phalanx.monitor.heartbeat import HeartbeatMonitor
     from phalanx.process.manager import ProcessManager
+    from phalanx.team.config import resolve_backend_for_role
 
     root = _get_root(ctx)
     phalanx_config = _get_config(root)
@@ -211,7 +213,29 @@ def create_team_cmd(
         from phalanx.team.create import create_team_from_config
 
         team_config = load_team_config(Path(config_path))
-        validate_team_models(team_config, backend_name)
+        validate_team_models(
+            team_config,
+            backend_name,
+            backend_overrides=phalanx_config.backend_overrides,
+        )
+
+        backends_in_use = set()
+        for agent_spec in team_config.agents:
+            resolved = agent_spec.backend or resolve_backend_for_role(
+                agent_spec.role,
+                backend_name,
+                phalanx_config.backend_overrides,
+            )
+            backends_in_use.add(resolved)
+        lead_resolved = team_config.lead.backend or resolve_backend_for_role(
+            "lead",
+            backend_name,
+            phalanx_config.backend_overrides,
+        )
+        backends_in_use.add(lead_resolved)
+        for be in sorted(backends_in_use):
+            check_and_prompt_skill(be, workspace=Path.cwd())
+
         team_id, lead_id, worker_ids = create_team_from_config(
             phalanx_root=root,
             db=db,
@@ -237,6 +261,25 @@ def create_team_cmd(
             raise SystemExit(1)
 
         from phalanx.team.create import create_team
+        from phalanx.team.create import parse_agents_spec
+
+        backends_in_use = {
+            resolve_backend_for_role(
+                "lead",
+                backend_name,
+                phalanx_config.backend_overrides,
+            )
+        }
+        for role, _count in parse_agents_spec(agents):
+            backends_in_use.add(
+                resolve_backend_for_role(
+                    role,
+                    backend_name,
+                    phalanx_config.backend_overrides,
+                )
+            )
+        for be in sorted(backends_in_use):
+            check_and_prompt_skill(be, workspace=Path.cwd())
 
         team_id, lead_id = create_team(
             phalanx_root=root,

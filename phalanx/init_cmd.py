@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import shutil
 import sys
+import os
 from pathlib import Path
 
 
@@ -189,7 +190,19 @@ def write_gemini_skill(workspace: Path) -> Path:
     return path
 
 
-def write_codex_skill(workspace: Path) -> Path:
+def write_codex_skill(workspace: Path) -> Path | None:
+    """Optionally write AGENTS.md for Codex.
+
+    Disabled by default to avoid modifying repository roots unexpectedly.
+    Enable explicitly with PHALANX_WRITE_CODEX_AGENTS=1.
+    """
+    if os.environ.get("PHALANX_WRITE_CODEX_AGENTS", "").strip().lower() not in (
+        "1",
+        "true",
+        "yes",
+    ):
+        return None
+
     path = workspace / "AGENTS.md"
     content = load_skill("codex")
     if path.exists():
@@ -210,16 +223,15 @@ _SKILL_WRITERS = {
 
 
 def init_workspace(workspace: Path) -> dict[str, list[str]]:
-    """Detect IDEs and deploy skill files to workspace. Returns dict of what was created."""
-    ides = detect_available_backends()
-    created = []
+    """Initialize workspace metadata.
 
-    for ide in ides:
-        writer = _SKILL_WRITERS.get(ide)
-        if writer:
-            path = writer(workspace)
-            if path:
-                created.append(f"{ide}: {path}")
+    Global skill installation is handled lazily by `check_and_prompt_skill()`
+    when a backend is actually used. We intentionally avoid creating
+    workspace-level provider files here, except Cursor's rule workaround which
+    is also applied lazily only when Cursor is selected.
+    """
+    ides = detect_available_backends()
+    created: list[str] = []
 
     phalanx_dir = workspace / ".phalanx"
     phalanx_dir.mkdir(exist_ok=True)

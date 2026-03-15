@@ -11,7 +11,9 @@ from phalanx.team.config import (
     TeamConfig,
     load_team_config,
     parse_team_config,
+    resolve_backend_for_role,
     resolve_model,
+    validate_team_models,
 )
 
 
@@ -30,6 +32,36 @@ class TestResolveModel:
     def test_lead_role(self):
         model = resolve_model("claude", "lead")
         assert model == "claude-sonnet-4-20250514"
+
+    def test_codex_defaults_to_gpt_5_4(self):
+        model = resolve_model("codex", "lead")
+        assert model == "gpt-5.4"
+
+
+class TestResolveBackendForRole:
+    def test_role_override_wins(self):
+        backend = resolve_backend_for_role(
+            role="coder",
+            default_backend="cursor",
+            backend_overrides={"coder": "codex", "worker": "claude"},
+        )
+        assert backend == "codex"
+
+    def test_worker_override_used_for_worker_roles(self):
+        backend = resolve_backend_for_role(
+            role="reviewer",
+            default_backend="cursor",
+            backend_overrides={"worker": "codex"},
+        )
+        assert backend == "codex"
+
+    def test_falls_back_to_default(self):
+        backend = resolve_backend_for_role(
+            role="lead",
+            default_backend="cursor",
+            backend_overrides={"worker": "codex"},
+        )
+        assert backend == "cursor"
 
 
 class TestAgentSpec:
@@ -156,3 +188,58 @@ class TestParseTeamConfig:
     def test_load_missing_file(self, tmp_path):
         with pytest.raises(FileNotFoundError):
             load_team_config(tmp_path / "nonexistent.json")
+
+
+def test_validate_team_models_uses_backend_overrides():
+    tc = TeamConfig(
+        task="mixed backend",
+        agents=[AgentSpec(name="dev", role="coder", prompt="do", model="o3")],
+        lead=LeadSpec(model="gpt-4.1"),
+    )
+    validate_team_models(
+        tc,
+        default_backend="cursor",
+        backend_overrides={"worker": "codex", "lead": "codex"},
+    )
+
+
+def test_validate_team_models_accepts_mixed_cursor_and_codex_models():
+    tc = TeamConfig(
+        task="mixed backend explicit models",
+        agents=[
+            AgentSpec(
+                name="worker",
+                role="coder",
+                prompt="do",
+                model="composer-1.5",
+            )
+        ],
+        lead=LeadSpec(model="gpt-5.4"),
+    )
+    validate_team_models(
+        tc,
+        default_backend="cursor",
+        backend_overrides={"worker": "cursor", "lead": "codex"},
+    )
+
+
+def test_validate_team_models_does_not_reject_unknown_model_strings():
+    tc = TeamConfig(
+        task="runtime model fallback",
+        agents=[AgentSpec(name="dev", role="coder", prompt="do", model="some-future-model")],
+        lead=LeadSpec(model="another-unknown-model"),
+    )
+    validate_team_models(
+        tc,
+        default_backend="cursor",
+        backend_overrides={"worker": "codex", "lead": "claude"},
+    )
+
+
+def test_validate_team_models_still_rejects_unknown_backends():
+    tc = TeamConfig(
+        task="invalid backend",
+        agents=[AgentSpec(name="dev", role="coder", prompt="do", backend="nope")],
+    )
+    with pytest.raises(ValueError, match="Unknown backend"):
+        validate_team_models(tc, default_backend="cursor")

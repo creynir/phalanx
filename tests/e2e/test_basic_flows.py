@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from phalanx.db import StateDB
+from phalanx.config import PhalanxConfig
 from phalanx.team.create import create_team
 from phalanx.team.orchestrator import stop_team, get_team_status
 
@@ -119,7 +120,7 @@ class TestE2E003_DefaultLaunchMode:
 
 
 class TestE2E004_SkillDeployment:
-    """E2E-004: phalanx init deploys workspace rules."""
+    """E2E-004: phalanx init creates workspace metadata only."""
 
     def test_skill_files(self, tmp_path):
         from phalanx.init_cmd import init_workspace
@@ -127,7 +128,7 @@ class TestE2E004_SkillDeployment:
         (tmp_path / ".cursor").mkdir()
         result = init_workspace(tmp_path)
         assert (tmp_path / ".phalanx").exists()
-        assert len(result["skills_created"]) > 0
+        assert result["skills_created"] == []
 
 
 class TestE2E005_BackendModelFlags:
@@ -140,3 +141,32 @@ class TestE2E005_BackendModelFlags:
         cmd = backend.build_start_command(prompt="hello", model="opus-4.6")
         cmd_str = " ".join(cmd)
         assert "opus-4.6" in cmd_str or "model" in cmd_str
+
+
+class TestE2E006_MixedBackendOverrides:
+    """E2E-006: Config backend_overrides routes lead/worker to different backends."""
+
+    def test_simple_create_team_uses_backend_overrides(self, mocked_spawn, db, tmp_path):
+        from phalanx.process.manager import ProcessManager
+        from phalanx.monitor.heartbeat import HeartbeatMonitor
+
+        pm = ProcessManager(tmp_path)
+        hb = HeartbeatMonitor(db)
+        cfg = PhalanxConfig(backend_overrides={"lead": "codex", "worker": "cursor"})
+
+        team_id, _lead_id = create_team(
+            phalanx_root=tmp_path,
+            db=db,
+            process_manager=pm,
+            heartbeat_monitor=hb,
+            task="mixed backend test",
+            agents_spec="coder",
+            backend_name="claude",
+            config=cfg,
+        )
+
+        agents = db.list_agents(team_id)
+        lead = next(a for a in agents if a["role"] == "lead")
+        worker = next(a for a in agents if a["role"] != "lead")
+        assert lead["backend"] == "codex"
+        assert worker["backend"] == "cursor"
