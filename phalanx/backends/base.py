@@ -25,6 +25,7 @@ class AgentBackend(ABC):
         soul_file: Path | None = None,
         model: str | None = None,
         worktree: str | None = None,
+        auto_approve: bool = False,
     ) -> list[str]:
         """Build the CLI command to start a new agent session in TUI mode.
 

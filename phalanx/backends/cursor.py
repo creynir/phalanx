@@ -26,9 +26,11 @@ class CursorBackend(AgentBackend):
         soul_file: Path | None = None,
         model: str | None = None,
         worktree: str | None = None,
-        auto_approve: bool = True,
+        auto_approve: bool = False,
     ) -> list[str]:
         cmd = [self.binary_name()]
+        if auto_approve:
+            cmd.extend(self.auto_approve_flags())
         if model:
             cmd += ["--model", model]
         if worktree:

@@ -252,6 +252,24 @@ def run_team_monitor(
                 if refreshed and refreshed.get("artifact_status"):
                     prev_status = agent.get("artifact_status")
                     new_status = refreshed["artifact_status"]
+
+                    # If the agent was marked blocked_on_prompt but has since
+                    # written its artifact, the block is stale — clear it.
+                    # Covers both agent_idle (brief idle before artifact write)
+                    # and permission_prompt (post-task prompts on a done agent).
+                    if (
+                        new_status in ("success", "failure")
+                        and refreshed.get("status") == "blocked_on_prompt"
+                        and refreshed.get("prompt_state") in ("agent_idle", "permission_prompt")
+                    ):
+                        db.update_agent(agent_id, status="running")
+                        logger.info(
+                            "Cleared stale blocked_on_prompt for agent %s "
+                            "(artifact=%s written after idle detection)",
+                            agent_id,
+                            new_status,
+                        )
+
                     if new_status == "success" and prev_status != "success":
                         _notify_lead(
                             process_manager,

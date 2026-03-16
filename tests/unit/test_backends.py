@@ -98,10 +98,31 @@ class TestClaudeBackend:
         pass
 
     def test_headless_basic(self):
+        # Without auto_approve: no permission flag, no @file (deferred prompt)
         cmd = self.b.build_start_command("refactor auth")
         assert cmd[0].endswith("claude")
+        assert "--dangerously-skip-permissions" not in cmd
+        assert not any("@" in c for c in cmd)
+
+    def test_headless_auto_approve(self):
+        cmd = self.b.build_start_command("refactor auth", auto_approve=True)
         assert "--dangerously-skip-permissions" in cmd
-        assert "@refactor auth" in cmd
+
+    def test_deferred_prompt(self):
+        # Claude uses deferred prompt — file is delivered after TUI starts
+        assert self.b.deferred_prompt() is True
+        assert self.b.tui_ready_indicator() == "❯"
+
+    def test_format_deferred_prompt_file(self, tmp_path):
+        task_file = tmp_path / "task.md"
+        task_file.write_text("Execute this task.")
+        deferred = self.b.format_deferred_prompt(str(task_file))
+        assert deferred.startswith("@")
+        assert str(task_file.absolute()) in deferred
+
+    def test_format_deferred_prompt_nonexistent(self):
+        deferred = self.b.format_deferred_prompt("raw prompt text")
+        assert deferred == "raw prompt text"
 
     def test_headless_with_model(self):
         cmd = self.b.build_start_command("task", model="opus")
@@ -124,10 +145,15 @@ class TestGeminiBackend:
         pass
 
     def test_headless_basic(self):
+        # Without auto_approve: no permission flag
         cmd = self.b.build_start_command("research topic")
         assert cmd[0].endswith("gemini")
-        assert "--yolo" in cmd
+        assert "--yolo" not in cmd
         assert "@research topic" in cmd
+
+    def test_headless_auto_approve(self):
+        cmd = self.b.build_start_command("research topic", auto_approve=True)
+        assert "--yolo" in cmd
 
     def test_headless_with_policy(self, tmp_path):
         policy = tmp_path / "soul.md"
@@ -152,15 +178,20 @@ class TestCodexBackend:
         pass
 
     def test_interactive_basic(self):
+        # Without auto_approve: no permission flag
         cmd = self.b.build_start_command("fix bug")
         assert cmd[0].endswith("codex")
-        assert "--full-auto" in cmd
+        assert "--full-auto" not in cmd
         assert "@fix bug" in cmd
+
+    def test_interactive_auto_approve(self):
+        cmd = self.b.build_start_command("fix bug", auto_approve=True)
+        assert "--full-auto" in cmd
 
     def test_headless_basic(self):
         cmd = self.b.build_start_command("write tests")
         assert cmd[0].endswith("codex")
-        assert "--full-auto" in cmd
+        assert "--full-auto" not in cmd
         assert "@write tests" in cmd
 
     def test_resume(self):

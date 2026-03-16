@@ -98,15 +98,14 @@ def _check_workspace_trust(lines: list[str]) -> bool:
 def _check_permission_prompt(lines: list[str]) -> bool:
     text = "\n".join(lines[-10:])
     permission_keywords = [
-        "Allow",
-        "Deny",
-        "approve",
-        "reject",
         "Do you want to",
         "Permission required",
         "(y/n)",
         "[Y/n]",
         "[y/N]",
+        "[yes/no]",
+        "Allow this",
+        "Deny this",
     ]
     return any(kw in text for kw in permission_keywords)
 
@@ -242,6 +241,12 @@ def _check_agent_idle(lines: list[str]) -> bool:
         "Thinking",
         "ctrl+c to stop",
         "Waiting for approval",
+        # Claude Code active-work indicators
+        "Coalescing",
+        "Pondering",
+        "Baking",
+        "Cooking",
+        "esc to interrupt",
     ]
     if any(ind in tail for ind in active_indicators):
         return False
@@ -425,7 +430,19 @@ class StallDetector:
 
     def _detect_prompt(self, agent_id: str, screen: list[str]) -> PromptDetection | None:
         """Run all registered prompt patterns against the screen."""
+        # If the agent has already written a success/failure artifact it is done.
+        # Only structural patterns (process_exited, buffer_corrupted) remain
+        # relevant; everything else would be a false positive from the agent's
+        # own output text appearing in the scroll-back.
+        agent_has_artifact = self._agent_has_artifact(agent_id)
+
         for pattern_name, checker in _PROMPT_PATTERNS:
+            if agent_has_artifact and pattern_name not in (
+                "process_exited",
+                "buffer_corrupted",
+            ):
+                continue
+
             if pattern_name == "agent_idle":
                 # Agent sitting at prompt after writing an escalation artifact
                 # is NOT idle — it's waiting for Outer Loop intervention.
@@ -433,7 +450,7 @@ class StallDetector:
                     continue
                 # Agent sitting at prompt is only a problem if it hasn't written
                 # its artifact yet — otherwise it finished normally.
-                if not self._agent_has_artifact(agent_id):
+                if not agent_has_artifact:
                     now = time.time()
                     last_nudge = self._last_idle_nudge.get(agent_id, 0)
                     if (now - last_nudge) >= IDLE_NUDGE_COOLDOWN:

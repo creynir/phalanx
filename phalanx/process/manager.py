@@ -257,11 +257,8 @@ class ProcessManager:
             soul_file=soul_file,
             model=model,
             worktree=worktree,
+            auto_approve=auto_approve,
         )
-
-        if auto_approve:
-            approve_flags = [f for f in backend.auto_approve_flags() if f not in cmd_parts]
-            cmd_parts[1:1] = approve_flags
 
         cmd_str = shlex.join(cmd_parts)
         pane.send_keys(cmd_str, enter=True, literal=True)
@@ -369,7 +366,7 @@ class ProcessManager:
 
         if auto_approve:
             approve_flags = [f for f in backend.auto_approve_flags() if f not in cmd_parts]
-            cmd_parts[1:1] = approve_flags
+            cmd_parts[1:1] = approve_flags  # resume commands don't have auto_approve param
 
         cmd_str = shlex.join(cmd_parts)
         pane.send_keys(cmd_str, enter=True, literal=True)
@@ -622,40 +619,67 @@ class ProcessManager:
     ) -> None:
         """Resolve known startup prompts that can block unattended launches.
 
-        For Codex, this handles the workspace trust screen by selecting
-        "1. Yes, continue" only after that exact prompt is visible.
+        For Codex, this handles the workspace trust screen.
+        For Claude, this handles any confirmation prompts in bypass mode.
         """
         try:
             backend_name = backend.name().lower()
         except Exception:
             backend_name = ""
 
-        if backend_name != "codex":
-            return
+        if backend_name == "codex":
+            deadline = time.monotonic() + timeout
+            while time.monotonic() < deadline:
+                try:
+                    lines = pane.capture_pane() or []
+                    text = "\n".join(lines[-40:])
+                except Exception:
+                    time.sleep(poll_interval)
+                    continue
 
-        deadline = time.monotonic() + timeout
-        while time.monotonic() < deadline:
-            try:
-                lines = pane.capture_pane() or []
-                text = "\n".join(lines[-40:])
-            except Exception:
+                has_trust_prompt = (
+                    "Do you trust the contents of this directory?" in text
+                    and ("Yes, continue" in text or "Press enter to continue" in text)
+                )
+                if has_trust_prompt:
+                    pane.send_keys("1", enter=True)
+                    logger.info("Auto-accepted Codex workspace trust prompt for agent %s", agent_id)
+                    return
+
+                # Stop polling once Codex reaches its normal prompt state.
+                if "OpenAI Codex" in text and "? for shortcuts" in text:
+                    return
+
                 time.sleep(poll_interval)
-                continue
 
-            has_trust_prompt = (
-                "Do you trust the contents of this directory?" in text
-                and ("Yes, continue" in text or "Press enter to continue" in text)
-            )
-            if has_trust_prompt:
-                pane.send_keys("1", enter=True)
-                logger.info("Auto-accepted Codex workspace trust prompt for agent %s", agent_id)
-                return
+        elif backend_name == "claude":
+            deadline = time.monotonic() + timeout
+            while time.monotonic() < deadline:
+                try:
+                    lines = pane.capture_pane() or []
+                    text = "\n".join(lines[-40:])
+                except Exception:
+                    time.sleep(poll_interval)
+                    continue
 
-            # Stop polling once Codex reaches its normal prompt state.
-            if "OpenAI Codex" in text and "? for shortcuts" in text:
-                return
+                lower = text.lower()
 
-            time.sleep(poll_interval)
+                # Auto-accept any explicit confirmation required for bypass mode
+                if (
+                    "bypass permissions" in lower or "dangerously" in lower
+                ) and (
+                    "continue?" in lower or "proceed?" in lower or "[y/n]" in lower
+                    or "press enter" in lower
+                ):
+                    pane.send_keys("y", enter=True)
+                    logger.info("Auto-accepted Claude bypass mode prompt for agent %s", agent_id)
+                    return
+
+                # Claude is at idle prompt (ready) — stop polling
+                if "❯" in text:
+                    return
+
+                time.sleep(poll_interval)
 
     def _detect_startup_blocked(
         self,
@@ -681,8 +705,6 @@ class ProcessManager:
             "subscription",
             "api usage billing",
             "console account",
-            "warning: claude code running in bypass permissions mode",
-            "bypass permissions mode",
         )
         progress_patterns = (
             "phalanx write-artifact",
