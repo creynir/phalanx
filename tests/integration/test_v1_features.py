@@ -31,8 +31,8 @@ def tmp_db():
     with tempfile.TemporaryDirectory() as td:
         db = StateDB(db_path=Path(td) / "state.db")
         db.create_team("t1", "test task")
-        db.create_agent("w1", "t1", "code", role="worker", backend="cursor")
-        db.create_agent("w2", "t1", "test", role="worker", backend="cursor")
+        db.create_agent("w1", "t1", "code", role="agent", backend="cursor")
+        db.create_agent("w2", "t1", "test", role="agent", backend="cursor")
         yield db
 
 
@@ -42,7 +42,7 @@ def tmp_db_with_root():
         root = Path(td)
         db = StateDB(db_path=root / ".phalanx" / "state.db")
         db.create_team("t1", "test task")
-        db.create_agent("w1", "t1", "code", role="worker", backend="cursor")
+        db.create_agent("w1", "t1", "code", role="agent", backend="cursor")
         db.create_agent("lead-t1", "t1", "coordinate", role="lead", backend="cursor")
         yield db, root
 

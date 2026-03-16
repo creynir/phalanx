@@ -58,7 +58,7 @@ def _make_agent(
     db: StateDB,
     agent_id: str,
     team_id: str,
-    role: str = "worker",
+    role: str = "agent",
     status: str = "dead",
     task: str = "do work",
     backend: str = "cursor",
@@ -79,8 +79,8 @@ class TestBug1Fix_ResumeWakesAllAgents:
         """resume_team(resume_all=True) wakes every dead/suspended agent."""
         _make_team(db, "t1")
         _make_agent(db, "lead-1", "t1", role="lead", status="dead")
-        _make_agent(db, "worker-1", "t1", role="worker", status="dead")
-        _make_agent(db, "worker-2", "t1", role="worker", status="dead")
+        _make_agent(db, "worker-1", "t1", role="agent", status="dead")
+        _make_agent(db, "worker-2", "t1", role="agent", status="dead")
 
         mock_pm = MagicMock(spec=ProcessManager)
         mock_hb = MagicMock(spec=HeartbeatMonitor)
@@ -110,8 +110,8 @@ class TestBug1Fix_ResumeWakesAllAgents:
         """resume_team(resume_all=False) wakes only the lead (--lead-only flag)."""
         _make_team(db, "t2")
         _make_agent(db, "lead-2", "t2", role="lead", status="dead")
-        _make_agent(db, "worker-a", "t2", role="worker", status="dead")
-        _make_agent(db, "worker-b", "t2", role="worker", status="dead")
+        _make_agent(db, "worker-a", "t2", role="agent", status="dead")
+        _make_agent(db, "worker-b", "t2", role="agent", status="dead")
 
         mock_pm = MagicMock(spec=ProcessManager)
         mock_hb = MagicMock(spec=HeartbeatMonitor)
@@ -141,8 +141,8 @@ class TestBug1Fix_ResumeWakesAllAgents:
         """resume_team wakes suspended agents (not just dead)."""
         _make_team(db, "t3")
         _make_agent(db, "lead-3", "t3", role="lead", status="dead")
-        _make_agent(db, "worker-susp", "t3", role="worker", status="suspended")
-        _make_agent(db, "worker-dead", "t3", role="coder", status="dead")
+        _make_agent(db, "worker-susp", "t3", role="agent", status="suspended")
+        _make_agent(db, "worker-dead", "t3", role="agent", status="dead")
 
         mock_pm = MagicMock(spec=ProcessManager)
         mock_hb = MagicMock(spec=HeartbeatMonitor)
@@ -173,7 +173,7 @@ class TestBug1Fix_ResumeWakesAllAgents:
         """resume_team does not re-spawn agents that are already running."""
         _make_team(db, "t4")
         _make_agent(db, "lead-4", "t4", role="lead", status="dead")
-        _make_agent(db, "worker-running", "t4", role="worker", status="running")
+        _make_agent(db, "worker-running", "t4", role="agent", status="running")
 
         mock_pm = MagicMock(spec=ProcessManager)
         mock_hb = MagicMock(spec=HeartbeatMonitor)
@@ -205,8 +205,8 @@ class TestBug1Fix_ResumeWakesAllAgents:
         db_instance = StateDB(tmp_path / "state.db")
         _make_team(db_instance, "t-cli-1")
         _make_agent(db_instance, "lead-cli", "t-cli-1", role="lead", status="dead")
-        _make_agent(db_instance, "worker-cli-1", "t-cli-1", role="worker", status="dead")
-        _make_agent(db_instance, "worker-cli-2", "t-cli-1", role="worker", status="dead")
+        _make_agent(db_instance, "worker-cli-1", "t-cli-1", role="agent", status="dead")
+        _make_agent(db_instance, "worker-cli-2", "t-cli-1", role="agent", status="dead")
 
         mock_proc = MagicMock()
         mock_proc.stream_log = tmp_path / "stream.log"
@@ -243,8 +243,8 @@ class TestBug1Fix_ResumeWakesAllAgents:
         db_instance = StateDB(tmp_path / "state.db")
         _make_team(db_instance, "t-cli-2")
         _make_agent(db_instance, "lead-cli2", "t-cli-2", role="lead", status="dead")
-        _make_agent(db_instance, "worker-cli-a", "t-cli-2", role="worker", status="dead")
-        _make_agent(db_instance, "worker-cli-b", "t-cli-2", role="worker", status="dead")
+        _make_agent(db_instance, "worker-cli-a", "t-cli-2", role="agent", status="dead")
+        _make_agent(db_instance, "worker-cli-b", "t-cli-2", role="agent", status="dead")
 
         mock_proc = MagicMock()
         mock_proc.stream_log = tmp_path / "stream.log"
@@ -291,7 +291,7 @@ class TestBug2Fix_BlockedOnPromptAgents:
         db_instance = StateDB(tmp_path / "state.db")
         _make_team(db_instance, "t-blk")
         _make_agent(
-            db_instance, "blocked-agent", "t-blk", role="worker", status="blocked_on_prompt"
+            db_instance, "blocked-agent", "t-blk", role="agent", status="blocked_on_prompt"
         )
 
         # deliver_message is imported inside the function body, patch at source module
@@ -315,7 +315,7 @@ class TestBug2Fix_BlockedOnPromptAgents:
         """message-agent still rejects dead agents (unchanged behaviour)."""
         db_instance = StateDB(tmp_path / "state.db")
         _make_team(db_instance, "t-dead")
-        _make_agent(db_instance, "dead-agent", "t-dead", role="worker", status="dead")
+        _make_agent(db_instance, "dead-agent", "t-dead", role="agent", status="dead")
 
         with (
             patch("phalanx.cli.StateDB", return_value=db_instance),
@@ -335,7 +335,7 @@ class TestBug2Fix_BlockedOnPromptAgents:
         """message-agent still rejects suspended agents (unchanged behaviour)."""
         db_instance = StateDB(tmp_path / "state.db")
         _make_team(db_instance, "t-susp")
-        _make_agent(db_instance, "susp-agent", "t-susp", role="worker", status="suspended")
+        _make_agent(db_instance, "susp-agent", "t-susp", role="agent", status="suspended")
 
         with (
             patch("phalanx.cli.StateDB", return_value=db_instance),
@@ -355,7 +355,7 @@ class TestBug2Fix_BlockedOnPromptAgents:
         db_instance = StateDB(tmp_path / "state.db")
         _make_team(db_instance, "t-status")
         _make_agent(
-            db_instance, "blocked-status", "t-status", role="worker", status="blocked_on_prompt"
+            db_instance, "blocked-status", "t-status", role="agent", status="blocked_on_prompt"
         )
 
         with (
@@ -376,7 +376,7 @@ class TestBug2Fix_BlockedOnPromptAgents:
     def test_resume_agent_rejects_blocked_on_prompt(self, db, tmp_path):
         """resume-agent still raises for blocked_on_prompt (it has a live session)."""
         _make_team(db, "t-blk2")
-        _make_agent(db, "blocked-2", "t-blk2", role="worker", status="blocked_on_prompt")
+        _make_agent(db, "blocked-2", "t-blk2", role="agent", status="blocked_on_prompt")
 
         mock_pm = MagicMock(spec=ProcessManager)
         mock_hb = MagicMock(spec=HeartbeatMonitor)
@@ -413,7 +413,7 @@ class TestBug2Fix_BlockedOnPromptAgents:
             ("agent-running", "running"),
             ("agent-blocked", "blocked_on_prompt"),
         ]:
-            _make_agent(db_instance, agent_id, "t-guard", role="worker", status=status)
+            _make_agent(db_instance, agent_id, "t-guard", role="agent", status=status)
 
         with (
             patch("phalanx.cli.StateDB", return_value=db_instance),
@@ -449,9 +449,9 @@ class TestBug1AndBug2Interaction:
         """
         _make_team(db, "t-interaction")
         _make_agent(db, "lead-i", "t-interaction", role="lead", status="dead")
-        _make_agent(db, "worker-dead", "t-interaction", role="worker", status="dead")
+        _make_agent(db, "worker-dead", "t-interaction", role="agent", status="dead")
         _make_agent(
-            db, "worker-blocked", "t-interaction", role="worker", status="blocked_on_prompt"
+            db, "worker-blocked", "t-interaction", role="agent", status="blocked_on_prompt"
         )
 
         mock_pm = MagicMock(spec=ProcessManager)
@@ -483,7 +483,7 @@ class TestBug1AndBug2Interaction:
         """Team status becomes 'running' even when some agents remain blocked."""
         _make_team(db, "t-partial")
         _make_agent(db, "lead-p", "t-partial", role="lead", status="dead")
-        _make_agent(db, "worker-p-blocked", "t-partial", role="worker", status="blocked_on_prompt")
+        _make_agent(db, "worker-p-blocked", "t-partial", role="agent", status="blocked_on_prompt")
 
         mock_pm = MagicMock(spec=ProcessManager)
         mock_hb = MagicMock(spec=HeartbeatMonitor)
@@ -529,7 +529,7 @@ class TestE2EIdleResumeMessageFlow:
         _make_team(db_instance, "team-e2e")
         # In an idle timeout, the lead might be suspended, workers might be dead or suspended.
         _make_agent(db_instance, "lead-e2e", "team-e2e", role="lead", status="suspended")
-        _make_agent(db_instance, "worker-e2e", "team-e2e", role="worker", status="dead")
+        _make_agent(db_instance, "worker-e2e", "team-e2e", role="agent", status="dead")
 
         mock_proc = MagicMock()
         mock_proc.stream_log = tmp_path / "stream.log"
