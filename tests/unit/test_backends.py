@@ -128,7 +128,8 @@ class TestClaudeBackend:
         pass
 
     def test_headless_basic(self):
-        # Without auto_approve: no permission flag, no @file (deferred prompt)
+        # Without auto_approve, --dangerously-skip-permissions should NOT be present.
+        # No @file in the start command — prompt is delivered via deferred prompt.
         cmd = self.b.build_start_command("refactor auth")
         assert cmd[0].endswith("claude")
         assert "--dangerously-skip-permissions" not in cmd

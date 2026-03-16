@@ -77,7 +77,7 @@ class TestResumeBug:
             patch("phalanx.monitor.heartbeat.HeartbeatMonitor"),
             patch("phalanx.team.orchestrator.resume_team") as mock_resume,
         ):
-            mock_cfg.return_value = MagicMock(idle_timeout_seconds=1800)
+            mock_cfg.return_value = MagicMock(idle_timeout=1800)
             mock_resume.return_value = {"team_id": "team-t1", "resumed_agents": ["lead-t1"]}
 
             result = runner.invoke(cli, ["team", "resume", "team-t1"])
@@ -106,7 +106,7 @@ class TestResumeBug:
             patch("phalanx.commands.team._get_db", return_value=_db),
             patch("phalanx.team.orchestrator.resume_team", side_effect=fake_resume_team),
         ):
-            mock_cfg.return_value = MagicMock(idle_timeout_seconds=1800)
+            mock_cfg.return_value = MagicMock(idle_timeout=1800)
             result = runner.invoke(cli, ["team", "resume", team_id])
 
         assert result.exit_code == 0, result.output
@@ -125,7 +125,7 @@ class TestResumeBug:
             patch("phalanx.commands.team._get_config") as mock_cfg,
             patch("phalanx.team.orchestrator.resume_team") as mock_resume,
         ):
-            mock_cfg.return_value = MagicMock(idle_timeout_seconds=1800)
+            mock_cfg.return_value = MagicMock(idle_timeout=1800)
             mock_resume.return_value = {"team_id": "team-lo", "resumed_agents": []}
 
             result = runner.invoke(cli, ["team", "resume", "--lead-only", "team-lo"])
@@ -209,7 +209,7 @@ class TestBlockedOnPromptBug:
             patch("phalanx.commands.agent._get_db", return_value=_db),
             patch("phalanx.process.manager.ProcessManager") as mock_pm_cls,
         ):
-            mock_cfg.return_value = MagicMock(idle_timeout_seconds=1800)
+            mock_cfg.return_value = MagicMock(idle_timeout=1800)
             mock_pm = MagicMock()
             mock_pm_cls.return_value = mock_pm
             mock_pm.send_keys.side_effect = (
@@ -235,7 +235,7 @@ class TestBlockedOnPromptBug:
             patch("phalanx.commands.agent._get_config") as mock_cfg,
             patch("phalanx.commands.agent._get_db", return_value=_db),
         ):
-            mock_cfg.return_value = MagicMock(idle_timeout_seconds=1800)
+            mock_cfg.return_value = MagicMock(idle_timeout=1800)
             result = runner.invoke(cli, ["agent", "resume", agent_id])
 
         assert result.exit_code != 0, (
@@ -260,7 +260,7 @@ class TestBlockedOnPromptBug:
             patch("phalanx.commands.agent._get_db", return_value=_db),
             patch("phalanx.team.orchestrator.resume_single_agent") as mock_rsa,
         ):
-            mock_cfg.return_value = MagicMock(idle_timeout_seconds=1800)
+            mock_cfg.return_value = MagicMock(idle_timeout=1800)
             mock_rsa.return_value = {
                 "agent_id": "agent-res",
                 "team_id": "team-res",

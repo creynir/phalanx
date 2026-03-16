@@ -45,7 +45,6 @@ def _build_resume_prompt(
     soul_map = {
         "lead": "team_lead.md",
         "worker": "agent.md",
-        "engineering_manager": "engineering_manager.md",
     }
     soul_file = soul_dir / soul_map.get(role, "agent.md")
 
@@ -64,16 +63,6 @@ def _build_resume_prompt(
     if role == "lead":
         return _build_lead_resume(
             phalanx_root,
-            team_id,
-            agent_id,
-            original_task,
-            soul_content,
-            all_agents,
-        )
-    elif role == "engineering_manager":
-        return _build_engineering_manager_resume(
-            phalanx_root,
-            db,
             team_id,
             agent_id,
             original_task,
@@ -268,114 +257,6 @@ def _build_worker_resume(
     return merged
 
 
-def _build_engineering_manager_resume(
-    phalanx_root: Path,
-    db: StateDB,
-    team_id: str,
-    agent_id: str,
-    original_task: str,
-    soul_content: str,
-    all_agents: list[dict],
-) -> str:
-    """Build resume prompt for an engineering manager (outer loop) agent.
-
-    Injects full team state, all artifacts, event log summary,
-    and escalation context.
-    """
-    prompt = soul_content
-    if "{task}" in prompt:
-        prompt = prompt.replace("{task}", original_task)
-
-    resume_ctx = "\n\n---\n\n## RESUME CONTEXT — Engineering Manager Activation\n\n"
-    resume_ctx += (
-        "You are being activated because the Middle Loop could not resolve "
-        "a systemic issue. Analyze the state below and emit an EngineeringManagerDecision.\n\n"
-    )
-
-    resume_ctx += f"**Team ID:** {team_id}\n\n"
-
-    # Full agent state
-    resume_ctx += "### All Agent Statuses\n"
-    for a in all_agents:
-        line = f"- {a['id']} (role={a['role']}, status={a['status']}"
-        line += f", backend={a.get('backend', '?')}, model={a.get('model', '?')}"
-        line += f", attempts={a.get('attempts', 0)}"
-        art = read_agent_artifact(phalanx_root, team_id, a["id"])
-        if art:
-            line += f", artifact={art.status}"
-        else:
-            line += ", artifact=none"
-        line += ")"
-        resume_ctx += line + "\n"
-
-    # All artifacts
-    resume_ctx += "\n### Agent Artifacts\n"
-    for a in all_agents:
-        art = read_agent_artifact(phalanx_root, team_id, a["id"])
-        if art:
-            output = art.output
-            if isinstance(output, str):
-                try:
-                    output = json.loads(output)
-                except (json.JSONDecodeError, TypeError):
-                    pass
-            resume_ctx += (
-                f"#### {a['id']} ({a['role']}, artifact={art.status})\n"
-                f"```json\n{json.dumps(output, indent=2, ensure_ascii=False)[:3000]}\n```\n\n"
-            )
-
-    # Event log summary
-    try:
-        events = db.get_recent_events(team_id, limit=30)
-        if events:
-            resume_ctx += "### Recent Events (newest first)\n"
-            for r in events:
-                resume_ctx += (
-                    f"- {r['event_type']}"
-                    f" agent={r.get('agent_id', 'N/A')}"
-                    f" payload={r.get('payload', '')}\n"
-                )
-            resume_ctx += "\n"
-    except Exception as e:
-        import logging
-
-        logging.getLogger(__name__).warning("Failed to get recent events: %s", e)
-
-    # Escalation context from feed
-    try:
-        recent_feed = db.get_feed(team_id, limit=20)
-        escalation_msgs = [
-            m
-            for m in recent_feed
-            if "[ESCALATION]" in m.get("content", "")
-            or "escalation" in m.get("content", "").lower()
-        ]
-        if escalation_msgs:
-            resume_ctx += "### Escalation Messages\n"
-            for m in escalation_msgs:
-                resume_ctx += f"- From {m['sender_id']}: {m['content']}\n"
-            resume_ctx += "\n"
-    except Exception as e:
-        import logging
-
-        logging.getLogger(__name__).warning("Failed to get recent events: %s", e)
-
-    resume_ctx += (
-        "### Instructions\n"
-        "1. Analyze the team state, event log, and escalation context above.\n"
-        "2. Identify the root cause of the issue.\n"
-        "3. Select the least disruptive action that resolves the problem.\n"
-        "4. Write your artifact with the EngineeringManagerDecision JSON.\n"
-    )
-
-    merged = (
-        "Execute the following task immediately "
-        "without summarising or asking questions:"
-        f"\n\n{prompt}{resume_ctx}"
-    )
-    return merged
-
-
 def _get_post_artifact_feed(
     db: "StateDB | None",
     team_id: str,
@@ -407,7 +288,6 @@ def get_team_status(db: StateDB, team_id: str) -> dict | None:
             "total_tokens": cost_breakdown.total_tokens,
             "input_tokens": cost_breakdown.total_input_tokens,
             "output_tokens": cost_breakdown.total_output_tokens,
-            "estimated_cost": cost_breakdown.total_estimated_cost,
         }
     except Exception:
         cost_summary = None
@@ -581,11 +461,11 @@ def _resume_agent_with_context(
 
 def _kill_team_monitor(team_id: str) -> None:
     """Kill the team monitor tmux session if it exists."""
+    session_name = f"phalanx-mon-{team_id}"
     try:
         import libtmux
 
         server = libtmux.Server()
-        session_name = f"phalanx-mon-{team_id}"
         session = server.sessions.get(session_name=session_name)
         session.kill()
         logger.info("Killed team monitor session %s", session_name)

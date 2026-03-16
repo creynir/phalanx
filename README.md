@@ -1,166 +1,172 @@
 # Phalanx
 
-Open-source, vendor-agnostic multi-agent orchestration CLI.
-
-Phalanx lets you spin up teams of AI coding agents from any supported backend (Cursor, Claude Code, Gemini CLI, Codex CLI) and coordinate them through a single unified interface — with isolated worktrees, shared message feeds, artifact collection, and automatic stall detection.
+Vendor-agnostic multi-agent orchestration CLI — spin up parallel AI coding teams from a single command.
 
 ## Install
 
 ```bash
-pip install phalanx-cli
-# or
 uv tool install phalanx-cli
 ```
 
 Requires: Python 3.11+, tmux, git.
 
-## Backend Authentication (Required)
-
-Before using Phalanx, authenticate each backend CLI you plan to run.
-Phalanx can spawn agents non-interactively, so first-run login prompts inside
-tmux can block teams if auth has not been completed beforehand.
-
-At minimum, run each backend once and finish its login flow:
-
-```bash
-agent
-claude
-gemini
-codex
-```
-
-Then re-run Phalanx.
-
 ## Quick Start
 
 ```bash
-phalanx --auto-approve --model gpt-5.4
+# Initialize phalanx in your workspace
+phalanx init
+
+# Launch your agent with phalanx skills installed
+phalanx --auto-approve --backend claude --model claude-opus-4-6
+
+# Or create a team directly from a config file
+phalanx team create --config team.json
 ```
 
-That's it. Phalanx installs its skill into your agent CLI, then launches it. You talk to your agent as usual:
+Once launched, your agent knows all phalanx commands via an installed skill. Describe what you want in plain language and the agent handles team creation, task delegation, monitoring, and result consolidation.
 
-> "Spin up a team of 2 coders and a reviewer to refactor the auth module"
+## Team Config (v2)
 
-> "Have 3 agents audit the codebase — one for security, one for performance, one for reliability — and give me a consolidated report"
-
-The agent knows phalanx commands via the installed skill. It handles everything: creating the team, assigning tasks, monitoring workers, collecting results, and reporting back. You don't need to memorize any commands.
-
-Flags:
-- `--backend` — which agent CLI to launch (`cursor`, `claude`, `gemini`, `codex`). Auto-detected if omitted.
-- `--model` — model to use. Optional.
-- `--auto-approve` — enable auto-approval of tool calls in the agent.
-
-You can also run phalanx commands directly as a tool (e.g. from an already-running agent session) — see CLI Reference below.
-
-## How It Works
-
-1. **You talk to your agent** — describe what you want in plain language
-2. **The agent creates a team** — spawning specialized sub-agents in isolated tmux sessions
-3. **Workers run in parallel** — each in its own session, optionally in a separate git worktree
-4. **The daemon watches everything** — detects stalls/crashes, pushes real-time events to the team lead
-5. **Results flow back** — workers write structured artifacts, team lead consolidates and reports to you
-
-### Event-Driven Coordination
-
-The daemon pushes `[PHALANX EVENT]` notifications to the team lead the moment something happens — a worker finishes, gets stuck, or dies. The lead reacts immediately instead of polling on a timer:
-
-- `worker_done` → read artifact, check if all workers complete
-- `worker_blocked` → send a targeted nudge
-- `worker_dead` → record failure, decide whether to escalate
-
-### Agent Communication
-
-```bash
-phalanx message-agent <agent-id> "focus on the DB layer"   # target one worker
-phalanx broadcast <team-id> "wrap up and write artifacts"  # all workers at once
-phalanx post "team-id" "status update"                     # write to shared feed
-phalanx feed                                               # read the shared feed
-```
-
-## Supported Backends
-
-| Backend | Binary | Model Routing |
-|---------|--------|---------------|
-| Cursor | `agent` | All vendors |
-| Claude Code | `claude` | Anthropic |
-| Gemini CLI | `gemini` | Google |
-| Codex CLI | `codex` | OpenAI |
-
-## Agent Roles
-
-| Role | Purpose |
-|------|---------|
-| `researcher` | Investigation, large-context analysis |
-| `coder` | Implementation, bug fixes, tests |
-| `reviewer` | Code review, large diffs |
-| `architect` | Design decisions, high-stakes reasoning |
-
-Phalanx automatically selects the best model per role and backend. Configurable in `.phalanx/config.json`.
-
-## Architecture
-
-- **State**: SQLite (WAL mode) at `.phalanx/state.db`
-- **Process isolation**: Agents run interactively inside background `tmux` sessions. Output is captured via `pipe-pane` into `stream.log`, enabling screen-scrape-based stall detection without fragile prompt engineering.
-- **Real-time messaging**: Because agents run live in `tmux`, Phalanx delivers messages by injecting keystrokes — instant, no session restart required.
-- **Event-push daemon**: The per-team monitor daemon detects state changes and pushes structured notifications to the team lead, so the lead is reactive rather than polling.
-- **Artifacts**: Structured JSON outputs written by each agent, readable by the lead and the orchestrator.
-- **Stall detection**: `stream.log` mtime and content hash are monitored. Idle agents are nudged; timed-out agents are killed and DB state is updated.
-- **Spawn stagger**: Backends with startup races (e.g. Cursor's `cli-config.json`) are staggered automatically.
-- **GC**: Opportunistic cleanup of dead teams, running on standard CLI commands.
-
-## CLI Reference
-
-### Team Management
-
-| Command | Description |
-|---------|-------------|
-| `phalanx init` | Initialize `.phalanx/` in workspace |
-| `phalanx create-team "task"` | Create a team with a shared task |
-| `phalanx create-team --config file.json` | Create a team with per-agent prompts and worktrees |
-| `phalanx team-status <id>` | Show team and all agent statuses |
-| `phalanx team-result <id>` | Read team lead's final consolidated artifact |
-| `phalanx list-teams` | List all teams |
-| `phalanx stop <id>` | Stop a team (keep data, resumable) |
-| `phalanx resume <id>` | Resume a stopped team |
-| `phalanx gc` | Clean up dead teams and old data |
-
-### Monitoring & Messaging
-
-| Command | Description |
-|---------|-------------|
-| `phalanx status` | Show all running agents across all teams |
-| `phalanx agent-status <id>` | Show specific agent status and last heartbeat |
-| `phalanx monitor <id>` | Attach a blocking monitoring loop |
-| `phalanx message <team-id> "msg"` | Message the team lead |
-| `phalanx message-agent <agent-id> "msg"` | Message a specific agent |
-| `phalanx broadcast <team-id> "msg"` | Broadcast to all agents in a team |
-| `phalanx send-keys <agent-id> <keys>` | Send raw keystrokes to an agent's tmux pane |
-
-### Agent Tools (used by spawned agents)
-
-| Command | Description |
-|---------|-------------|
-| `phalanx write-artifact --status <s> --output '<json>'` | Write structured result |
-| `phalanx agent-result <id>` | Read a peer agent's artifact |
-| `phalanx feed` | Read the shared team message feed |
-| `phalanx post "msg"` | Post a message to the shared feed |
-| `phalanx lock <path>` / `phalanx unlock <path>` | Advisory file locking |
-
-## Configuration
-
-`.phalanx/config.json`:
+Use `phalanx team create --example` to print a valid v2 config:
 
 ```json
 {
-  "default_backend": "codex",
-  "idle_timeout_seconds": 1800,
-  "max_runtime_seconds": 1800,
-  "stall_check_interval": 20,
-  "auto_approve": true
+  "lead": {
+    "model": "opus-4.6",
+    "prompt": "You are the team lead. Delegate tasks to agents and synthesize results.",
+    "backend": "cursor"
+  },
+  "agents": [
+    {
+      "model": "sonnet-4.6",
+      "prompt": "Implement the feature described by the lead.",
+      "backend": "cursor"
+    }
+  ],
+  "idle_timeout": 1800,
+  "max_runtime": 3600
 }
 ```
 
-## Develop Locally
+**Fields:**
+
+| Field | Description |
+|-------|-------------|
+| `lead.model` | Model for the team lead |
+| `lead.prompt` | Task/instruction for the team lead |
+| `lead.backend` | Backend to run the lead on |
+| `lead.soul` | (Optional) Path to a custom soul file for the lead |
+| `agents[].model` | Model for this worker agent |
+| `agents[].prompt` | Task/instruction for this worker |
+| `agents[].backend` | Backend to run this worker on |
+| `agents[].soul` | (Optional) Path to a custom soul file for this worker |
+| `idle_timeout` | Seconds before an idle agent is considered stalled (default 1800) |
+| `max_runtime` | Hard cap in seconds before a team is killed (default 3600) |
+
+Mix backends freely — each agent in a team can use a different backend and model.
+
+## Command Reference
+
+### `phalanx team`
+
+| Command | Description |
+|---------|-------------|
+| `phalanx team create --config file.json` | Create a team from a v2 JSON config |
+| `phalanx team create --task "..."` | Create a team with a shared task string |
+| `phalanx team create --example` | Print a valid v2 config example and exit |
+| `phalanx team list` | List all teams with status summary |
+| `phalanx team status <team-id>` | Show team and all agent statuses |
+| `phalanx team result <team-id>` | Read the team lead's consolidated artifact |
+| `phalanx team stop <team-id>` | Kill team processes, keep data (resumable) |
+| `phalanx team resume <team-id>` | Resume a stopped or dead team |
+| `phalanx team broadcast <team-id> "msg"` | Send a message to all agents in a team |
+| `phalanx team monitor <team-id>` | Run the per-team monitoring daemon |
+| `phalanx team gc` | Clean up dead teams and stale data |
+
+### `phalanx agent`
+
+| Command | Description |
+|---------|-------------|
+| `phalanx agent status [agent-id]` | Show agent status and last heartbeat |
+| `phalanx agent result <agent-id>` | Read an agent's artifact |
+| `phalanx agent done --output '<json>'` | Write artifact and mark task complete |
+| `phalanx agent done --failed --output '<json>'` | Write artifact with failure status |
+| `phalanx agent done --escalate --output '<json>'` | Write artifact requesting escalation |
+| `phalanx agent stop <agent-id>` | Stop a specific agent |
+| `phalanx agent resume <agent-id>` | Resume a stopped or blocked agent |
+| `phalanx agent monitor <agent-id>` | Blocking monitor loop for one agent |
+| `phalanx agent logs <agent-id>` | Tail the stream log for an agent |
+| `phalanx agent keys <agent-id> <keys>` | Send raw keystrokes to an agent's tmux pane |
+| `phalanx agent models --backend <b>` | List available models for a backend |
+
+### `phalanx msg`
+
+| Command | Description |
+|---------|-------------|
+| `phalanx msg lead <team-id> "msg"` | Send a message to the team lead |
+| `phalanx msg agent <agent-id> "msg"` | Send a message to a specific agent |
+
+### `phalanx feed`
+
+| Command | Description |
+|---------|-------------|
+| `phalanx feed read` | Read the shared team feed |
+| `phalanx feed post "msg"` | Post a message to the shared team feed |
+
+### `phalanx lock`
+
+| Command | Description |
+|---------|-------------|
+| `phalanx lock acquire <file-path>` | Acquire an advisory lock on a file |
+| `phalanx lock release <file-path>` | Release an advisory lock on a file |
+| `phalanx lock status` | Show all active file locks |
+
+### Top-level
+
+| Command | Description |
+|---------|-------------|
+| `phalanx init` | Initialize `.phalanx/` in the current workspace |
+| `phalanx --backend <b> --model <m>` | Launch your agent with phalanx skills installed |
+
+## Backends
+
+| Backend | Binary | Provider |
+|---------|--------|----------|
+| `cursor` | `agent` | All vendors (model-routed) |
+| `claude` | `claude` | Anthropic |
+| `codex` | `codex` | OpenAI |
+| `gemini` | `gemini` | Google |
+
+**Authentication:** Each backend CLI must be authenticated before Phalanx can spawn agents non-interactively. Run each binary at least once and complete its login flow before using it with Phalanx.
+
+**Auto-approve:** Pass `--auto-approve` to `phalanx team create` (or set it in your top-level launch) to enable non-interactive tool-call approval for spawned agents. Each backend exposes this differently under the hood; Phalanx handles the translation automatically.
+
+## Soul System
+
+A *soul* is a markdown prompt file that defines an agent's role, tools, and behavioral rules. Phalanx injects the soul as a preamble before the agent's task prompt.
+
+**Built-in souls:**
+
+| Role | File | Used for |
+|------|------|----------|
+| `lead` | `phalanx/soul/team_lead.md` | Team lead agents |
+| `agent` | `phalanx/soul/agent.md` | Worker agents |
+
+Built-in souls are applied automatically based on role. They define event-reactive behavior for the lead (reacting to `[PHALANX EVENT]` notifications) and task-completion discipline for workers.
+
+**Custom soul:** Add a `soul` field to any `lead` or `agents[]` entry in your config pointing to a markdown file. Phalanx will use it in place of the built-in soul. You can also drop a `.phalanx/soul/` directory into your workspace to override built-ins project-wide.
+
+## How It Works
+
+1. **You describe a goal** — in plain language to your agent, or via a config file
+2. **Phalanx spawns a team** — lead and workers run in isolated tmux sessions, optionally in separate git worktrees
+3. **The daemon watches** — detects stalls, crashes, and completions; pushes `[PHALANX EVENT]` notifications to the team lead
+4. **The lead reacts** — immediately reads worker artifacts, sends nudges, restarts dead agents
+5. **Results flow back** — workers write structured artifacts; the lead consolidates and writes a final team artifact
+
+State is stored in SQLite (WAL mode) at `.phalanx/state.db`.
+
+## Develop
 
 ```bash
 git clone https://github.com/creynir/phalanx.git

@@ -246,7 +246,6 @@ class TestGetTeamStatusIncludesCosts:
         costs = status["costs"]
         assert costs is not None
         assert costs["total_tokens"] == 0
-        assert costs["estimated_cost"] is None
 
     def test_team_not_found(self, tmp_path):
         db = StateDB(db_path=tmp_path / "state.db")

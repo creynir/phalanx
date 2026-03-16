@@ -36,6 +36,11 @@ IDLE_NUDGE_COOLDOWN = 60  # seconds between repeated agent_idle detections
 STARTUP_GRACE_SECONDS = 120  # ignore DEAD during TUI cold-start
 STARTUP_DEAD_THRESHOLD = 3  # consecutive DEAD checks before confirming
 
+# Regex that matches a bare shell prompt (agent binary exited, tmux fell back
+# to an interactive shell).  The character class is intentionally permissive to
+# cover common prompt formats across different shells and themes.
+_BARE_PROMPT_RE = r"^[\w@.~/:, ()-]*[$%#>]\s*$"
+
 
 class AgentState(str, Enum):
     RUNNING = "running"
@@ -173,7 +178,7 @@ def _check_process_exited(lines: list[str]) -> bool:
     last_lines = [ln.strip() for ln in lines[-4:] if ln.strip()]
     if last_lines:
         last = last_lines[-1]
-        if re.match(r"^[\w@.~/:, ()-]*[$%#>]\s*$", last):
+        if re.match(_BARE_PROMPT_RE, last):
             return True
 
     return False

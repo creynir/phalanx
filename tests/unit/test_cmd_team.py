@@ -123,18 +123,6 @@ def test_team_result_requires_id():
     assert result.exit_code != 0
 
 
-def test_team_costs_help():
-    runner = CliRunner()
-    result = runner.invoke(cli, ["team", "costs", "--help"])
-    assert result.exit_code == 0
-
-
-def test_team_debt_help():
-    runner = CliRunner()
-    result = runner.invoke(cli, ["team", "debt", "--help"])
-    assert result.exit_code == 0
-
-
 def test_team_stop_help():
     runner = CliRunner()
     result = runner.invoke(cli, ["team", "stop", "--help"])

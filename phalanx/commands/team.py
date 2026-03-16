@@ -7,9 +7,20 @@ from pathlib import Path
 import click
 
 _EXAMPLE_CONFIG = {
-    "lead": {"prompt": "You are the team lead.", "model": None, "backend": None},
-    "agents": [{"role": "coder", "prompt": "Implement the feature.", "model": None, "backend": None}],
-    "task": "Build a REST API endpoint",
+    "lead": {
+        "model": "opus-4.6",
+        "prompt": "You are the team lead. Delegate tasks to agents and synthesize results.",
+        "backend": "cursor",
+    },
+    "agents": [
+        {
+            "model": "sonnet-4.6",
+            "prompt": "Implement the feature described by the lead.",
+            "backend": "cursor",
+        }
+    ],
+    "idle_timeout": 1800,
+    "max_runtime": 3600,
 }
 
 def _get_root(ctx: click.Context) -> Path:
@@ -65,14 +76,15 @@ def team_create_cmd(ctx, task, config_path, agents, backend, model, idle_timeout
     db = _get_db(root)
     backend_name = backend or cfg.default_backend
     auto_approve = auto_approve or ctx.obj.get("auto_approve", False)
-    eff_idle = idle_timeout or cfg.idle_timeout_seconds
-    eff_max = max_runtime or cfg.max_runtime_seconds
+    eff_idle = idle_timeout or cfg.idle_timeout
+    eff_max = max_runtime or cfg.max_runtime
     pm = ProcessManager(root)
     hb = HeartbeatMonitor(idle_timeout=eff_idle)
     if config_path:
-        from phalanx.team.config import load_team_config, validate_team_models
+        from phalanx.team.config import load_team_config_v2, v2_to_v1_team_config, validate_team_models
         from phalanx.team.create import create_team_from_config
-        tc = load_team_config(Path(config_path))
+        tc_v2 = load_team_config_v2(Path(config_path))
+        tc = v2_to_v1_team_config(tc_v2, task=task or "")
         validate_team_models(tc, backend_name, backend_overrides=cfg.backend_overrides)
         bes = {s.backend or resolve_backend_for_role(s.role, backend_name, cfg.backend_overrides) for s in tc.agents}
         bes.add(tc.lead.backend or resolve_backend_for_role("lead", backend_name, cfg.backend_overrides))
@@ -151,38 +163,6 @@ def team_result_cmd(ctx, team_id):
         click.echo(f"No artifact found for team '{team_id}'", err=True)
         raise SystemExit(1)
     _json_output(result)
-@team_group.command("costs")
-@click.argument("team_id")
-@click.pass_context
-def team_costs_cmd(ctx, team_id):
-    """Show token usage and cost breakdown for TEAM_ID."""
-    from phalanx.costs.aggregator import CostAggregator
-    root = _get_root(ctx)
-    cfg = _get_config(root)
-    breakdown = CostAggregator(_get_db(root), cost_table=getattr(cfg, "cost_table", None)).get_team_costs(team_id)
-    if ctx.obj.get("json_mode"):
-        _json_output(breakdown.to_dict())
-    else:
-        cost = f"${breakdown.total_estimated_cost:.4f}" if breakdown.total_estimated_cost is not None else "N/A"
-        click.echo(f"Team {team_id}: tokens={breakdown.total_tokens} (in={breakdown.total_input_tokens}/out={breakdown.total_output_tokens}), cost={cost}")
-        for role, data in (breakdown.by_role or {}).items():
-            click.echo(f"  {role}: {data['input_tokens']}in/{data['output_tokens']}out ${data.get('cost', 0):.4f}")
-@team_group.command("debt")
-@click.argument("team_id")
-@click.pass_context
-def team_debt_cmd(ctx, team_id):
-    """Show typed debt/compromise records for TEAM_ID."""
-    root = _get_root(ctx)
-    db = _get_db(root)
-    records = db.get_team_debt(team_id)
-    if ctx.obj.get("json_mode"):
-        _json_output({"team_id": team_id, "debt_records": records, "count": len(records)})
-    elif not records:
-        click.echo(f"No debt records for team {team_id}")
-    else:
-        click.echo(f"Team {team_id} Debt Records ({len(records)}):")
-        for r in records:
-            click.echo(f"  [{r['severity'].upper()}] {r['category']}: {r['description'][:80]}")
 @team_group.command("stop")
 @click.argument("team_id")
 @click.pass_context
@@ -213,7 +193,7 @@ def team_resume_cmd(ctx, team_id, lead_only, auto_approve):
         click.echo(f"Error: Team '{team_id}' not found", err=True)
         raise SystemExit(1)
     result = resume_team(phalanx_root=root, db=db, process_manager=ProcessManager(root),
-        heartbeat_monitor=HeartbeatMonitor(idle_timeout=cfg.idle_timeout_seconds),
+        heartbeat_monitor=HeartbeatMonitor(idle_timeout=cfg.idle_timeout),
         team_id=team_id, resume_all=not lead_only,
         auto_approve=auto_approve or ctx.obj.get("auto_approve", False))
     if ctx.obj.get("json_mode"):
@@ -258,8 +238,8 @@ def team_monitor_cmd(ctx, team_id, idle_timeout, max_runtime):
     root = _get_root(ctx)
     config = _get_config(root)
     db = _get_db(root)
-    eff_idle = idle_timeout or config.idle_timeout_seconds
-    eff_max = max_runtime or config.max_runtime_seconds
+    eff_idle = idle_timeout or config.idle_timeout
+    eff_max = max_runtime or config.max_runtime
     if db.get_team(team_id) is None:
         click.echo(f"Error: Team '{team_id}' not found", err=True)
         raise SystemExit(1)

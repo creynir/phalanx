@@ -454,3 +454,34 @@ def load_team_config_v2(path: Path) -> V2TeamConfig:
         raise FileNotFoundError(f"V2 team config not found: {path}")
     data = json.loads(path.read_text(encoding="utf-8"))
     return parse_team_config_v2(data)
+
+
+def v2_to_v1_team_config(v2: V2TeamConfig, task: str = "") -> TeamConfig:
+    """Convert a V2TeamConfig into a V1 TeamConfig.
+
+    V2 has no per-agent name/role, so synthetic values are generated:
+    * role defaults to "coder" for workers
+    * name is auto-generated from the index
+    The task is taken from the lead prompt when not provided explicitly.
+    """
+    effective_task = task or v2.lead.prompt
+
+    lead = LeadSpec(
+        name="team-lead",
+        model=v2.lead.model,
+        backend=v2.lead.backend,
+    )
+
+    agents = []
+    for idx, spec in enumerate(v2.agents):
+        agents.append(
+            AgentSpec(
+                name=f"agent-{idx}",
+                role="coder",
+                prompt=spec.prompt,
+                model=spec.model,
+                backend=spec.backend,
+            )
+        )
+
+    return TeamConfig(task=effective_task, agents=agents, lead=lead)

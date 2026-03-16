@@ -219,8 +219,8 @@ class TestBug1Fix_ResumeWakesAllAgents:
             patch("phalanx.team.create._spawn_team_monitor"),
         ):
             mock_cfg.return_value = MagicMock(
-                idle_timeout_seconds=1800,
-                max_runtime_seconds=1800,
+                idle_timeout=1800,
+                max_runtime=1800,
                 default_backend="cursor",
                 default_model=None,
             )
@@ -257,8 +257,8 @@ class TestBug1Fix_ResumeWakesAllAgents:
             patch("phalanx.team.create._spawn_team_monitor"),
         ):
             mock_cfg.return_value = MagicMock(
-                idle_timeout_seconds=1800,
-                max_runtime_seconds=1800,
+                idle_timeout=1800,
+                max_runtime=1800,
                 default_backend="cursor",
                 default_model=None,
             )
@@ -541,8 +541,8 @@ class TestE2EIdleResumeMessageFlow:
             patch("phalanx.comms.messaging.deliver_message", return_value=True) as mock_deliver,
         ):
             mock_cfg.return_value = MagicMock(
-                idle_timeout_seconds=1800,
-                max_runtime_seconds=1800,
+                idle_timeout=1800,
+                max_runtime=1800,
                 default_backend="cursor",
                 default_model=None,
             )

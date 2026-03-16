@@ -283,7 +283,7 @@ def _spawn_team_monitor(
 
     session_name = f"phalanx-mon-{team_id}"
     python = shlex.quote(sys.executable)
-    cmd = f"{python} -m phalanx.cli --root {shlex.quote(str(phalanx_root))} team-monitor {team_id}"
+    cmd = f"{python} -m phalanx.cli --root {shlex.quote(str(phalanx_root))} team monitor {team_id}"
     if idle_timeout is not None:
         cmd += f" --idle-timeout {idle_timeout}"
     if max_runtime is not None:

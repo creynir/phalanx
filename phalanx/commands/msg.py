@@ -62,8 +62,11 @@ def msg_lead_cmd(ctx, team_id, text):
 
     if ctx.obj.get("json_mode"):
         _json_output({"ok": delivered, "team_id": team_id, "delivered": delivered})
-    else:
+    elif delivered:
         click.echo(f"Message delivered to team lead ({lead['id']})")
+    else:
+        click.echo(f"Error: Failed to deliver message to team lead ({lead['id']})", err=True)
+        raise SystemExit(1)
 
 
 @msg_group.command("agent")
@@ -102,5 +105,8 @@ def msg_agent_cmd(ctx, agent_id, text):
 
     if ctx.obj.get("json_mode"):
         _json_output({"ok": delivered, "agent_id": agent_id, "delivered": delivered})
-    else:
+    elif delivered:
         click.echo(f"Message delivered to agent {agent_id}")
+    else:
+        click.echo(f"Error: Failed to deliver message to agent {agent_id}", err=True)
+        raise SystemExit(1)

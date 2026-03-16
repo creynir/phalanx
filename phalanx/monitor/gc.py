@@ -24,11 +24,11 @@ DEFAULT_GC_HOURS = 24
 
 def _kill_monitor_session(team_id: str) -> None:
     """Kill the team monitor tmux session if it exists."""
+    session_name = f"phalanx-mon-{team_id}"
     try:
         import libtmux
 
         server = libtmux.Server()
-        session_name = f"phalanx-mon-{team_id}"
         session = server.sessions.get(session_name=session_name)
         session.kill()
         logger.info("GC: killed monitor session %s", session_name)

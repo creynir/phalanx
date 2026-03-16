@@ -128,7 +128,7 @@ def agent_resume_cmd(ctx, agent_id, reply, auto_approve):
         return
     try:
         result = resume_single_agent(phalanx_root=root, db=db, process_manager=pm,
-            heartbeat_monitor=HeartbeatMonitor(idle_timeout=cfg.idle_timeout_seconds),
+            heartbeat_monitor=HeartbeatMonitor(idle_timeout=cfg.idle_timeout),
             agent_id=agent_id, auto_approve=auto_approve or ctx.obj.get("auto_approve", False))
     except ValueError as e:
         if ctx.obj.get("json_mode"):
@@ -159,11 +159,11 @@ def agent_monitor_cmd(ctx, agent_id):
         click.echo(f"Error: Agent '{agent_id}' not found", err=True)
         raise SystemExit(1)
     pm = ProcessManager(root)
-    hb = HeartbeatMonitor(idle_timeout=config.idle_timeout_seconds)
+    hb = HeartbeatMonitor(idle_timeout=config.idle_timeout)
     hb.register(agent_id, root / "teams" / agent["team_id"] / "agents" / agent_id / "stream.log")
-    sd = StallDetector(pm, hb, idle_timeout=config.idle_timeout_seconds, db=db)
+    sd = StallDetector(pm, hb, idle_timeout=config.idle_timeout, db=db)
     result = run_monitor_loop(agent_id=agent_id, process_manager=pm, heartbeat_monitor=hb,
-        stall_detector=sd, max_retries=config.max_retries, max_runtime=config.max_runtime_seconds,
+        stall_detector=sd, max_retries=config.max_retries, max_runtime=config.max_runtime,
         poll_interval=config.monitor_poll_interval)
     if ctx.obj.get("json_mode"):
         _json_output(result.to_dict())
@@ -264,7 +264,7 @@ def agent_models_cmd(backend):
     """List available models for the given backend."""
     from phalanx.backends.registry import get_backend
     try:
-        models = get_backend(backend).available_models()
+        models = get_backend(backend).list_models()
     except Exception as e:
         click.echo(f"Error: Unknown backend '{backend}': {e}", err=True)
         raise SystemExit(1)

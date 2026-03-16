@@ -142,6 +142,7 @@ class AgentProcess:
         shell prompt with no TUI chrome.
         """
         import re
+        from phalanx.monitor.stall import _BARE_PROMPT_RE
 
         if not lines:
             return False
@@ -163,7 +164,7 @@ class AgentProcess:
             tui_indicators = ("❯", "? for shortcuts", "→ Add a follow-up", "/ commands · @")
             if any(ind in last for ind in tui_indicators):
                 return False
-            if re.match(r"^[\w@.~/ ()-]*[$%#>]\s*$", last):
+            if re.match(_BARE_PROMPT_RE, last):
                 return True
 
         return False
