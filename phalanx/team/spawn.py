@@ -76,11 +76,13 @@ def spawn_agent(
         logger.error("Failed to spawn agent %s", agent_id)
         raise
 
+    # Normalize v1 role strings to v2 DB values: only "lead" and "agent" are valid.
+    db_role = role if role in ("lead", "agent") else "agent"
     db.create_agent(
         agent_id=agent_id,
         team_id=team_id,
         task=task,
-        role=role,
+        role=db_role,
         model=model,
         backend=backend_name,
         worktree=effective_worktree,

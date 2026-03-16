@@ -43,7 +43,7 @@ class TestTeams:
 
     def test_delete_team_cascades(self, db):
         db.create_team("t1", "task1")
-        db.create_agent("a1", "t1", "sub-task", "worker", "cursor")
+        db.create_agent("a1", "t1", "sub-task", "agent", "cursor")
         db.post_to_feed("t1", "a1", "hello")
         db.delete_team("t1")
         assert db.get_team("t1") is None
@@ -54,12 +54,12 @@ class TestAgents:
     def test_create_and_get(self, db):
         db.create_team("t1", "task1")
         db.create_agent(
-            "a1", "t1", task="sub-task", role="worker", backend="cursor", model="sonnet"
+            "a1", "t1", task="sub-task", role="agent", backend="cursor", model="sonnet"
         )
         agent = db.get_agent("a1")
         assert agent["id"] == "a1"
         assert agent["team_id"] == "t1"
-        assert agent["role"] == "worker"
+        assert agent["role"] == "agent"
         assert agent["task"] == "sub-task"
         assert agent["backend"] == "cursor"
         assert agent["model"] == "sonnet"
@@ -200,6 +200,97 @@ class TestMigration:
         db.post_to_feed("t1", "agent-1", "world")
         feed = db.get_feed("t1")
         assert len(feed) == 2
+
+
+class TestAgentV2Schema:
+    """v2 schema changes: soul_path column and role constraint."""
+
+    def test_soul_path_column_exists(self, db):
+        """soul_path column must exist on the agents table."""
+        import sqlite3
+
+        conn = sqlite3.connect(str(db._path))
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(agents)").fetchall()}
+        conn.close()
+        assert "soul_path" in cols
+
+    def test_create_agent_accepts_soul_path(self, db):
+        """create_agent() must accept a soul_path keyword argument."""
+        db.create_team("t1", "task1")
+        # Should not raise
+        db.create_agent(
+            "a1", "t1", task="sub-task", role="lead", backend="cursor",
+            soul_path="/souls/lead.md",
+        )
+        agent = db.get_agent("a1")
+        assert agent["soul_path"] == "/souls/lead.md"
+
+    def test_get_agent_returns_soul_path(self, db):
+        """get_agent() result dict must contain soul_path key."""
+        db.create_team("t1", "task1")
+        db.create_agent("a1", "t1", task="sub-task", role="agent", backend="cursor")
+        agent = db.get_agent("a1")
+        assert "soul_path" in agent
+
+    def test_soul_path_defaults_to_none(self, db):
+        """soul_path should be None when not provided at creation."""
+        db.create_team("t1", "task1")
+        db.create_agent("a1", "t1", task="sub-task", role="agent", backend="cursor")
+        agent = db.get_agent("a1")
+        assert agent["soul_path"] is None
+
+    def test_update_agent_soul_path(self, db):
+        """update_agent() must be able to update soul_path."""
+        db.create_team("t1", "task1")
+        db.create_agent("a1", "t1", task="sub-task", role="agent", backend="cursor")
+        db.update_agent("a1", soul_path="/souls/updated.md")
+        agent = db.get_agent("a1")
+        assert agent["soul_path"] == "/souls/updated.md"
+
+    def test_role_lead_is_valid(self, db):
+        """role='lead' must be accepted and soul_path must be present in the result."""
+        db.create_team("t1", "task1")
+        db.create_agent("a1", "t1", task="lead-task", role="lead", backend="cursor",
+                        soul_path="/souls/lead.md")
+        agent = db.get_agent("a1")
+        assert agent["role"] == "lead"
+        # soul_path key existence confirms v2 schema is in place
+        assert "soul_path" in agent
+
+    def test_role_agent_is_valid(self, db):
+        """role='agent' must be accepted and soul_path must be present in the result."""
+        db.create_team("t1", "task1")
+        db.create_agent("a1", "t1", task="agent-task", role="agent", backend="cursor",
+                        soul_path="/souls/agent.md")
+        agent = db.get_agent("a1")
+        assert agent["role"] == "agent"
+        # soul_path key existence confirms v2 schema is in place
+        assert "soul_path" in agent
+
+    def test_role_invalid_value_raises(self, db):
+        """role values other than 'lead' or 'agent' must raise an error."""
+        import sqlite3
+
+        db.create_team("t1", "task1")
+        with pytest.raises((ValueError, sqlite3.IntegrityError)):
+            db.create_agent("a1", "t1", task="task", role="coder", backend="cursor")
+
+    def test_role_invalid_reviewer_raises(self, db):
+        """role='reviewer' (another v1 value) must be rejected."""
+        import sqlite3
+
+        db.create_team("t1", "task1")
+        with pytest.raises((ValueError, sqlite3.IntegrityError)):
+            db.create_agent("a1", "t1", task="task", role="reviewer", backend="cursor")
+
+    def test_role_invalid_on_update_raises(self, db):
+        """update_agent() with an invalid role must raise an error."""
+        import sqlite3
+
+        db.create_team("t1", "task1")
+        db.create_agent("a1", "t1", task="task", role="lead", backend="cursor")
+        with pytest.raises((ValueError, sqlite3.IntegrityError)):
+            db.update_agent("a1", role="architect")
 
 
 class TestTransaction:

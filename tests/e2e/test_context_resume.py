@@ -28,8 +28,8 @@ def db(tmp_path):
 def team_with_artifacts(db, tmp_path):
     db.create_team("t1", "build a calculator")
     db.create_agent("lead-t1", "t1", "coordinate", role="lead")
-    db.create_agent("w1", "t1", "write code", role="worker")
-    db.create_agent("w2", "t1", "write tests", role="worker")
+    db.create_agent("w1", "t1", "write code", role="agent")
+    db.create_agent("w2", "t1", "write tests", role="agent")
 
     for aid in ("w1", "w2"):
         db.update_agent(aid, status="suspended", artifact_status="success")

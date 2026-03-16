@@ -30,7 +30,7 @@ class TestE2E006_WorkerDiesMidTask:
 
     def test_dead_detection(self, db):
         db.create_team("t1", "task")
-        db.create_agent("w1", "t1", "code", role="worker")
+        db.create_agent("w1", "t1", "code", role="agent")
         db.update_agent("w1", status="running")
 
         mock_pm = MagicMock()

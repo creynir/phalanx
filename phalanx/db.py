@@ -13,7 +13,9 @@ import time
 from contextlib import contextmanager
 from pathlib import Path
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
+
+_VALID_AGENT_ROLES = frozenset({"lead", "agent"})
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS teams (
@@ -28,7 +30,7 @@ CREATE TABLE IF NOT EXISTS teams (
 CREATE TABLE IF NOT EXISTS agents (
     id              TEXT PRIMARY KEY,
     team_id         TEXT NOT NULL REFERENCES teams(id),
-    role            TEXT NOT NULL DEFAULT 'worker',
+    role            TEXT NOT NULL DEFAULT 'agent' CHECK(role IN ('lead', 'agent')),
     task            TEXT NOT NULL,
     status          TEXT NOT NULL DEFAULT 'pending',
     pid             INTEGER,
@@ -45,7 +47,8 @@ CREATE TABLE IF NOT EXISTS agents (
     prompt_state    TEXT,
     prompt_screen   TEXT,
     ghost_restart_count INTEGER DEFAULT 0,
-    max_ghost_restarts  INTEGER DEFAULT 5
+    max_ghost_restarts  INTEGER DEFAULT 5,
+    soul_path       TEXT
 );
 
 CREATE TABLE IF NOT EXISTS feed (
@@ -233,6 +236,9 @@ class StateDB:
         if from_version < 6:
             self._migrate_to_v6(conn)
 
+        if from_version < 7:
+            self._migrate_to_v7(conn)
+
         conn.execute("UPDATE schema_version SET version = ?", (SCHEMA_VERSION,))
 
     def _migrate_to_v5(self, conn: sqlite3.Connection) -> None:
@@ -329,6 +335,12 @@ class StateDB:
                 "applied_at REAL)"
             )
 
+    def _migrate_to_v7(self, conn: sqlite3.Connection) -> None:
+        """v7: Add soul_path column to agents table."""
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(agents)").fetchall()}
+        if "soul_path" not in cols:
+            conn.execute("ALTER TABLE agents ADD COLUMN soul_path TEXT")
+
     @contextmanager
     def transaction(self):
         conn = self._connect()
@@ -396,19 +408,24 @@ class StateDB:
         agent_id: str,
         team_id: str,
         task: str,
-        role: str = "worker",
+        role: str = "agent",
         model: str | None = None,
         backend: str = "cursor",
         worktree: str | None = None,
+        soul_path: str | None = None,
     ) -> None:
+        if role not in _VALID_AGENT_ROLES:
+            raise ValueError(
+                f"Invalid agent role {role!r}. Must be one of: {sorted(_VALID_AGENT_ROLES)}"
+            )
         now = time.time()
         with self.transaction() as conn:
             conn.execute(
                 "INSERT INTO agents "
                 "(id, team_id, role, task, status, model, backend, worktree, "
-                " created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?)",
-                (agent_id, team_id, role, task, model, backend, worktree, now, now),
+                " created_at, updated_at, soul_path) "
+                "VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?)",
+                (agent_id, team_id, role, task, model, backend, worktree, now, now, soul_path),
             )
 
     def get_agent(self, agent_id: str) -> dict | None:
@@ -417,6 +434,10 @@ class StateDB:
             return dict(row) if row else None
 
     def update_agent(self, agent_id: str, **kwargs) -> None:
+        if "role" in kwargs and kwargs["role"] not in _VALID_AGENT_ROLES:
+            raise ValueError(
+                f"Invalid agent role {kwargs['role']!r}. Must be one of: {sorted(_VALID_AGENT_ROLES)}"
+            )
         kwargs["updated_at"] = time.time()
         set_clause = ", ".join(f"{k} = ?" for k in kwargs)
         values = list(kwargs.values()) + [agent_id]

@@ -37,8 +37,8 @@ def team_with_dead_workers(tmp_path):
     _db = StateDB(db_path=tmp_path / "test.db")
     _db.create_team("team-abc", "do some work")
     _db.create_agent("lead-001", "team-abc", "lead task", role="lead", backend="cursor")
-    _db.create_agent("worker-001", "team-abc", "coder task", role="coder", backend="cursor")
-    _db.create_agent("worker-002", "team-abc", "architect task", role="architect", backend="cursor")
+    _db.create_agent("worker-001", "team-abc", "coder task", role="agent", backend="cursor")
+    _db.create_agent("worker-002", "team-abc", "architect task", role="agent", backend="cursor")
 
     for agent_id in ("lead-001", "worker-001", "worker-002"):
         _db.update_agent(agent_id, status="dead")
@@ -51,7 +51,7 @@ def blocked_agent(tmp_path):
     """A single agent in blocked_on_prompt state."""
     _db = StateDB(db_path=tmp_path / "test.db")
     _db.create_team("team-xyz", "some task")
-    _db.create_agent("agent-blocked", "team-xyz", "worker task", role="coder", backend="cursor")
+    _db.create_agent("agent-blocked", "team-xyz", "worker task", role="agent", backend="cursor")
     _db.update_agent("agent-blocked", status="blocked_on_prompt")
     return tmp_path, "agent-blocked", _db
 
@@ -170,7 +170,7 @@ class TestBlockedOnPromptBug:
         """message-agent must still fail for dead agents — pane no longer exists."""
         _db = StateDB(db_path=tmp_path / "test.db")
         _db.create_team("team-dead", "task")
-        _db.create_agent("agent-dead", "team-dead", "task", role="coder")
+        _db.create_agent("agent-dead", "team-dead", "task", role="agent")
         _db.update_agent("agent-dead", status="dead")
 
         with (
@@ -188,7 +188,7 @@ class TestBlockedOnPromptBug:
         """message-agent must still fail for suspended agents."""
         _db = StateDB(db_path=tmp_path / "test.db")
         _db.create_team("team-sus", "task")
-        _db.create_agent("agent-sus", "team-sus", "task", role="coder")
+        _db.create_agent("agent-sus", "team-sus", "task", role="agent")
         _db.update_agent("agent-sus", status="suspended")
 
         with (
@@ -254,7 +254,7 @@ class TestBlockedOnPromptBug:
         """resume-agent (no --reply) must still work for dead agents as before."""
         _db = StateDB(db_path=tmp_path / "test.db")
         _db.create_team("team-res", "task")
-        _db.create_agent("agent-res", "team-res", "task", role="coder")
+        _db.create_agent("agent-res", "team-res", "task", role="agent")
         _db.update_agent("agent-res", status="dead")
 
         with (
