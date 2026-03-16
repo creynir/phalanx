@@ -58,8 +58,5 @@ class GeminiBackend(AgentBackend):
     def auto_approve_flags(self) -> list[str]:
         return ["--yolo"]
 
-    def available_models(self) -> list[str]:
-        return [
-            "gemini-2.5-pro",
-            "gemini-2.5-flash",
-        ]
+    def list_models(self) -> list[str]:
+        return ["Model listing not supported for this backend"]

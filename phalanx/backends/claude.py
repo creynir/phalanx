@@ -98,11 +98,8 @@ class ClaudeBackend(AgentBackend):
                 pass
         return None
 
-    def available_models(self) -> list[str]:
-        return [
-            "claude-sonnet-4-20250514",
-            "claude-opus-4-20250514",
-        ]
+    def list_models(self) -> list[str]:
+        return ["haiku", "sonnet", "opus", "opusplan"]
 
     def auto_approve_flags(self) -> list[str]:
         return ["--dangerously-skip-permissions"]

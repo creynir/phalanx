@@ -46,8 +46,8 @@ class AgentBackend(ABC):
         """Extract token/cost info from agent output."""
 
     @abstractmethod
-    def available_models(self) -> list[str]:
-        """List models available through this backend."""
+    def list_models(self) -> list[str]:
+        """Return the models available through this backend."""
 
     @abstractmethod
     def name(self) -> str:
