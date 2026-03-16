@@ -1,7 +1,7 @@
 """Tests explicitly catching the two CLI bugs fixed in this sprint:
 
-Bug 1: `phalanx resume` only woke up the Lead agent — workers were left dead.
-Bug 2: `phalanx message-agent` and `phalanx resume-agent` rejected
+Bug 1: `phalanx team resume <team_id>` only woke up the Lead agent — workers were left dead.
+Bug 2: `phalanx msg agent` and `phalanx agent resume` rejected
        agents in the `blocked_on_prompt` state.
 """
 
@@ -57,12 +57,12 @@ def blocked_agent(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Bug 1: resume must wake ALL dead agents, not just the lead
+# Bug 1: team resume must wake ALL dead agents, not just the lead
 # ---------------------------------------------------------------------------
 
 
 class TestResumeBug:
-    """Bug 1: phalanx resume <team_id> should wake ALL dead agents."""
+    """Bug 1: phalanx team resume <team_id> should wake ALL dead agents."""
 
     def test_resume_calls_resume_all_true_by_default(self, runner, db, tmp_path):
         """The CLI must pass resume_all=True to resume_team() without any flags."""
@@ -70,9 +70,9 @@ class TestResumeBug:
         db.create_agent("lead-t1", "team-t1", "lead task", role="lead")
 
         with (
-            patch("phalanx.cli._get_db", return_value=db),
-            patch("phalanx.cli._get_root", return_value=tmp_path),
-            patch("phalanx.cli._get_config") as mock_cfg,
+            patch("phalanx.commands.team._get_db", return_value=db),
+            patch("phalanx.commands.team._get_root", return_value=tmp_path),
+            patch("phalanx.commands.team._get_config") as mock_cfg,
             patch("phalanx.process.manager.ProcessManager"),
             patch("phalanx.monitor.heartbeat.HeartbeatMonitor"),
             patch("phalanx.team.orchestrator.resume_team") as mock_resume,
@@ -80,7 +80,7 @@ class TestResumeBug:
             mock_cfg.return_value = MagicMock(idle_timeout_seconds=1800)
             mock_resume.return_value = {"team_id": "team-t1", "resumed_agents": ["lead-t1"]}
 
-            result = runner.invoke(cli, ["resume", "team-t1"])
+            result = runner.invoke(cli, ["team", "resume", "team-t1"])
 
         assert result.exit_code == 0, result.output
         mock_resume.assert_called_once()
@@ -91,7 +91,7 @@ class TestResumeBug:
         )
 
     def test_resume_wakes_workers_not_just_lead(self, runner, team_with_dead_workers):
-        """All dead agents (lead + workers) must be woken up by resume."""
+        """All dead agents (lead + workers) must be woken up by team resume."""
         tmp_path, team_id, _db = team_with_dead_workers
 
         captured_resume_all: dict = {}
@@ -101,13 +101,13 @@ class TestResumeBug:
             return {"team_id": team_id, "resumed_agents": []}
 
         with (
-            patch("phalanx.cli._get_root", return_value=tmp_path),
-            patch("phalanx.cli._get_config") as mock_cfg,
-            patch("phalanx.cli._get_db", return_value=_db),
+            patch("phalanx.commands.team._get_root", return_value=tmp_path),
+            patch("phalanx.commands.team._get_config") as mock_cfg,
+            patch("phalanx.commands.team._get_db", return_value=_db),
             patch("phalanx.team.orchestrator.resume_team", side_effect=fake_resume_team),
         ):
             mock_cfg.return_value = MagicMock(idle_timeout_seconds=1800)
-            result = runner.invoke(cli, ["resume", team_id])
+            result = runner.invoke(cli, ["team", "resume", team_id])
 
         assert result.exit_code == 0, result.output
         assert captured_resume_all.get("value") is True, (
@@ -120,15 +120,15 @@ class TestResumeBug:
         db.create_agent("lead-lo", "team-lo", "lead task", role="lead")
 
         with (
-            patch("phalanx.cli._get_db", return_value=db),
-            patch("phalanx.cli._get_root", return_value=tmp_path),
-            patch("phalanx.cli._get_config") as mock_cfg,
+            patch("phalanx.commands.team._get_db", return_value=db),
+            patch("phalanx.commands.team._get_root", return_value=tmp_path),
+            patch("phalanx.commands.team._get_config") as mock_cfg,
             patch("phalanx.team.orchestrator.resume_team") as mock_resume,
         ):
             mock_cfg.return_value = MagicMock(idle_timeout_seconds=1800)
             mock_resume.return_value = {"team_id": "team-lo", "resumed_agents": []}
 
-            result = runner.invoke(cli, ["resume", "--lead-only", "team-lo"])
+            result = runner.invoke(cli, ["team", "resume", "--lead-only", "team-lo"])
 
         assert result.exit_code == 0, result.output
         _, kwargs = mock_resume.call_args
@@ -143,73 +143,70 @@ class TestResumeBug:
 
 
 class TestBlockedOnPromptBug:
-    """Bug 2: message-agent and resume-agent must work for blocked_on_prompt agents."""
+    """Bug 2: msg agent and agent resume must work for blocked_on_prompt agents."""
 
     def test_message_agent_blocked_on_prompt_is_allowed(self, runner, blocked_agent):
-        """message-agent must succeed for blocked_on_prompt agents (live tmux pane)."""
+        """msg agent must succeed for blocked_on_prompt agents (live tmux pane)."""
         tmp_path, agent_id, _db = blocked_agent
 
         with (
-            patch("phalanx.cli._get_root", return_value=tmp_path),
-            patch("phalanx.cli._get_config"),
-            patch("phalanx.cli._get_db", return_value=_db),
+            patch("phalanx.commands.msg._get_root", return_value=tmp_path),
+            patch("phalanx.commands.msg._get_db", return_value=_db),
             patch("phalanx.process.manager.ProcessManager") as mock_pm_cls,
         ):
             mock_pm = MagicMock()
             mock_pm_cls.return_value = mock_pm
             mock_pm.send_keys.return_value = True
 
-            result = runner.invoke(cli, ["message-agent", agent_id, "y"])
+            result = runner.invoke(cli, ["msg", "agent", agent_id, "y"])
 
         assert result.exit_code == 0, (
-            f"Bug 2 regression: message-agent must not reject blocked_on_prompt agents. "
+            f"Bug 2 regression: msg agent must not reject blocked_on_prompt agents. "
             f"Output: {result.output}"
         )
 
     def test_message_agent_dead_agent_is_still_rejected(self, runner, tmp_path):
-        """message-agent must still fail for dead agents — pane no longer exists."""
+        """msg agent must still fail for dead agents — pane no longer exists."""
         _db = StateDB(db_path=tmp_path / "test.db")
         _db.create_team("team-dead", "task")
         _db.create_agent("agent-dead", "team-dead", "task", role="agent")
         _db.update_agent("agent-dead", status="dead")
 
         with (
-            patch("phalanx.cli._get_root", return_value=tmp_path),
-            patch("phalanx.cli._get_config"),
-            patch("phalanx.cli._get_db", return_value=_db),
+            patch("phalanx.commands.msg._get_root", return_value=tmp_path),
+            patch("phalanx.commands.msg._get_db", return_value=_db),
         ):
-            result = runner.invoke(cli, ["message-agent", "agent-dead", "hello"])
+            result = runner.invoke(cli, ["msg", "agent", "agent-dead", "hello"])
 
         assert result.exit_code != 0, (
             "Dead agents must not receive messages — their tmux pane is gone"
         )
 
     def test_message_agent_suspended_agent_is_rejected(self, runner, tmp_path):
-        """message-agent must still fail for suspended agents."""
+        """msg agent must still fail for suspended agents."""
         _db = StateDB(db_path=tmp_path / "test.db")
         _db.create_team("team-sus", "task")
         _db.create_agent("agent-sus", "team-sus", "task", role="agent")
         _db.update_agent("agent-sus", status="suspended")
 
         with (
-            patch("phalanx.cli._get_root", return_value=tmp_path),
-            patch("phalanx.cli._get_config"),
-            patch("phalanx.cli._get_db", return_value=_db),
+            patch("phalanx.commands.msg._get_root", return_value=tmp_path),
+            patch("phalanx.commands.msg._get_db", return_value=_db),
         ):
-            result = runner.invoke(cli, ["message-agent", "agent-sus", "hello"])
+            result = runner.invoke(cli, ["msg", "agent", "agent-sus", "hello"])
 
         assert result.exit_code != 0
 
     def test_resume_agent_reply_flag_sends_keystrokes(self, runner, blocked_agent):
-        """resume-agent --reply 'y' must send keystrokes to unblock a blocked agent."""
+        """agent resume --reply 'y' must send keystrokes to unblock a blocked agent."""
         tmp_path, agent_id, _db = blocked_agent
 
         captured_send_keys: list = []
 
         with (
-            patch("phalanx.cli._get_root", return_value=tmp_path),
-            patch("phalanx.cli._get_config") as mock_cfg,
-            patch("phalanx.cli._get_db", return_value=_db),
+            patch("phalanx.commands.agent._get_root", return_value=tmp_path),
+            patch("phalanx.commands.agent._get_config") as mock_cfg,
+            patch("phalanx.commands.agent._get_db", return_value=_db),
             patch("phalanx.process.manager.ProcessManager") as mock_pm_cls,
         ):
             mock_cfg.return_value = MagicMock(idle_timeout_seconds=1800)
@@ -219,10 +216,10 @@ class TestBlockedOnPromptBug:
                 lambda aid, keys, enter=True: captured_send_keys.append((aid, keys)) or True
             )
 
-            result = runner.invoke(cli, ["resume-agent", agent_id, "--reply", "y"])
+            result = runner.invoke(cli, ["agent", "resume", agent_id, "--reply", "y"])
 
         assert result.exit_code == 0, (
-            f"Bug 2 regression: resume-agent --reply must succeed for blocked agents. "
+            f"Bug 2 regression: agent resume --reply must succeed for blocked agents. "
             f"Output: {result.output}"
         )
         assert any(keys == "y" for _, keys in captured_send_keys), (
@@ -230,19 +227,19 @@ class TestBlockedOnPromptBug:
         )
 
     def test_resume_agent_without_reply_fails_for_blocked(self, runner, blocked_agent):
-        """resume-agent without --reply must fail clearly for blocked_on_prompt agents."""
+        """agent resume without --reply must fail clearly for blocked_on_prompt agents."""
         tmp_path, agent_id, _db = blocked_agent
 
         with (
-            patch("phalanx.cli._get_root", return_value=tmp_path),
-            patch("phalanx.cli._get_config") as mock_cfg,
-            patch("phalanx.cli._get_db", return_value=_db),
+            patch("phalanx.commands.agent._get_root", return_value=tmp_path),
+            patch("phalanx.commands.agent._get_config") as mock_cfg,
+            patch("phalanx.commands.agent._get_db", return_value=_db),
         ):
             mock_cfg.return_value = MagicMock(idle_timeout_seconds=1800)
-            result = runner.invoke(cli, ["resume-agent", agent_id])
+            result = runner.invoke(cli, ["agent", "resume", agent_id])
 
         assert result.exit_code != 0, (
-            "resume-agent without --reply must fail for blocked_on_prompt agents "
+            "agent resume without --reply must fail for blocked_on_prompt agents "
             "with a helpful hint"
         )
         combined = result.output or ""
@@ -251,16 +248,16 @@ class TestBlockedOnPromptBug:
         )
 
     def test_resume_agent_dead_agent_still_works_normally(self, runner, tmp_path):
-        """resume-agent (no --reply) must still work for dead agents as before."""
+        """agent resume (no --reply) must still work for dead agents as before."""
         _db = StateDB(db_path=tmp_path / "test.db")
         _db.create_team("team-res", "task")
         _db.create_agent("agent-res", "team-res", "task", role="agent")
         _db.update_agent("agent-res", status="dead")
 
         with (
-            patch("phalanx.cli._get_root", return_value=tmp_path),
-            patch("phalanx.cli._get_config") as mock_cfg,
-            patch("phalanx.cli._get_db", return_value=_db),
+            patch("phalanx.commands.agent._get_root", return_value=tmp_path),
+            patch("phalanx.commands.agent._get_config") as mock_cfg,
+            patch("phalanx.commands.agent._get_db", return_value=_db),
             patch("phalanx.team.orchestrator.resume_single_agent") as mock_rsa,
         ):
             mock_cfg.return_value = MagicMock(idle_timeout_seconds=1800)
@@ -269,15 +266,15 @@ class TestBlockedOnPromptBug:
                 "team_id": "team-res",
                 "status": "running",
             }
-            result = runner.invoke(cli, ["resume-agent", "agent-res"])
+            result = runner.invoke(cli, ["agent", "resume", "agent-res"])
 
         assert result.exit_code == 0, (
-            f"resume-agent must still work normally for dead agents. Output: {result.output}"
+            f"agent resume must still work normally for dead agents. Output: {result.output}"
         )
 
 
 # ---------------------------------------------------------------------------
-# Regression: message_agent status update after unblocking
+# Regression: msg agent status update after unblocking
 # ---------------------------------------------------------------------------
 
 
@@ -289,19 +286,18 @@ class TestMessageAgentStatusUpdate:
         tmp_path, agent_id, _db = blocked_agent
 
         with (
-            patch("phalanx.cli._get_root", return_value=tmp_path),
-            patch("phalanx.cli._get_config"),
-            patch("phalanx.cli._get_db", return_value=_db),
+            patch("phalanx.commands.msg._get_root", return_value=tmp_path),
+            patch("phalanx.commands.msg._get_db", return_value=_db),
             patch("phalanx.process.manager.ProcessManager") as mock_pm_cls,
         ):
             mock_pm = MagicMock()
             mock_pm_cls.return_value = mock_pm
             mock_pm.send_keys.return_value = True
 
-            result = runner.invoke(cli, ["message-agent", agent_id, "y"])
+            result = runner.invoke(cli, ["msg", "agent", agent_id, "y"])
 
         assert result.exit_code == 0
         updated = _db.get_agent(agent_id)
         assert updated["status"] == "running", (
-            "After unblocking via message-agent, agent status must be updated to 'running'"
+            "After unblocking via msg agent, agent status must be updated to 'running'"
         )

@@ -207,6 +207,8 @@ dev = [
 [package.dev-dependencies]
 dev = [
     { name = "libtmux" },
+    { name = "pytest" },
+    { name = "ruff" },
 ]
 
 [package.metadata]
@@ -224,7 +226,11 @@ requires-dist = [
 provides-extras = ["dev"]
 
 [package.metadata.requires-dev]
-dev = [{ name = "libtmux", specifier = ">=0.53.1" }]
+dev = [
+    { name = "libtmux", specifier = ">=0.53.1" },
+    { name = "pytest", specifier = ">=9.0.2" },
+    { name = "ruff", specifier = ">=0.15.4" },
+]
 
 [[package]]
 name = "pluggy"
