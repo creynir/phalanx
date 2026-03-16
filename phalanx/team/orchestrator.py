@@ -44,14 +44,14 @@ def _build_resume_prompt(
     soul_dir = Path(__file__).parent.parent / "soul"
     soul_map = {
         "lead": "team_lead.md",
-        "worker": "worker.md",
+        "worker": "agent.md",
         "engineering_manager": "engineering_manager.md",
     }
-    soul_file = soul_dir / soul_map.get(role, "worker.md")
+    soul_file = soul_dir / soul_map.get(role, "agent.md")
 
     # Fallback: check user-overridable soul dir
     user_soul_dir = phalanx_root / "soul"
-    user_soul_file = user_soul_dir / soul_map.get(role, "worker.md")
+    user_soul_file = user_soul_dir / soul_map.get(role, "agent.md")
     if user_soul_file.exists():
         soul_file = user_soul_file
 
