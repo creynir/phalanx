@@ -416,6 +416,14 @@ class StateDB:
             row = conn.execute("SELECT * FROM agents WHERE id = ?", (agent_id,)).fetchone()
             return dict(row) if row else None
 
+    def find_team_for_agent(self, agent_id: str) -> str | None:
+        """Return the team_id for the given agent_id, or None if not found."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT team_id FROM agents WHERE id = ?", (agent_id,)
+            ).fetchone()
+            return row["team_id"] if row else None
+
     def update_agent(self, agent_id: str, **kwargs) -> None:
         kwargs["updated_at"] = time.time()
         set_clause = ", ".join(f"{k} = ?" for k in kwargs)

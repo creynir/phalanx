@@ -49,4 +49,6 @@ line-length = 100
 [dependency-groups]
 dev = [
     "libtmux>=0.53.1",
+    "pytest>=9.0.2",
+    "ruff>=0.15.4",
 ]
