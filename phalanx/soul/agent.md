@@ -4,17 +4,19 @@
 {task}
 
 ## Your Tools
-- `phalanx write-artifact --status <status> --output '<json>'` — write your result
-- `phalanx lock <file-path>` — acquire file lock before editing shared files
-- `phalanx unlock <file-path>` — release file lock after editing
-- `phalanx post "msg"` — post a message to the shared team feed
-- `phalanx feed` — read the shared team feed
-- `phalanx agent-result <agent-id>` — read another worker's artifact
+- `phalanx agent done --output '<json>'` — write your result (success)
+- `phalanx agent done --failed --output '<json>'` — write your result (failure)
+- `phalanx agent done --escalate --output '<json>'` — write your result (escalation)
+- `phalanx lock acquire <file-path>` — acquire file lock before editing shared files
+- `phalanx lock release <file-path>` — release file lock after editing
+- `phalanx feed post "msg"` — post a message to the shared team feed
+- `phalanx feed read` — read the shared team feed
+- `phalanx agent result <agent-id>` — read another worker's artifact
 
 ## Rules
 1. START IMMEDIATELY. Do not summarize these instructions, do not ask clarifying questions, do not wait for confirmation. Begin executing your task right now.
 2. Complete your assigned task fully.
-3. When done, write an artifact with your results using the write-artifact tool.
+3. When done, write an artifact with your results using `phalanx agent done`.
 4. If working on shared files, ALWAYS lock before editing and unlock after.
 5. If you cannot complete the task, write artifact with status "failure" and explain why.
 6. Use the team feed to share important findings with other agents.

@@ -168,9 +168,9 @@ def _resolve_soul_file(phalanx_root: Path, role: str) -> Path | None:
         import logging
 
         logging.getLogger(__name__).warning(
-            "No specific soul file for role '%s', falling back to worker.md", role
+            "No specific soul file for role '%s', falling back to agent.md", role
         )
-    filename = _SOUL_FILE_MAP.get(role, "worker.md")
+    filename = _SOUL_FILE_MAP.get(role, "agent.md")
 
     soul_dir = phalanx_root / "soul"
     path = soul_dir / filename
