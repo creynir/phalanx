@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -83,8 +85,36 @@ class TestCursorBackend:
         assert "--resume" in cmd
         assert "abc-123" in cmd
 
-    def test_available_models_include_composer(self):
-        assert "composer-1.5" in self.b.available_models()
+    # --- v2 tests ---
+
+    def test_list_models_returns_list(self):
+        result = self.b.list_models()
+        assert isinstance(result, list)
+        assert all(isinstance(m, str) for m in result)
+
+    def test_list_models_contains_auto(self):
+        result = self.b.list_models()
+        assert "auto" in result
+
+    def test_list_models_parses_cli_output(self):
+        fake_stderr = (
+            "Cannot use this model: --help. "
+            "Available models: auto, sonnet-4.6, gpt-5.4"
+        )
+        fake_result = MagicMock()
+        fake_result.stderr = fake_stderr
+        fake_result.returncode = 1
+        with patch("phalanx.backends.cursor.subprocess.run", return_value=fake_result):
+            result = self.b.list_models()
+        assert result == ["auto", "sonnet-4.6", "gpt-5.4"]
+
+    def test_list_models_handles_cli_failure(self):
+        with patch(
+            "phalanx.backends.cursor.subprocess.run",
+            side_effect=FileNotFoundError("agent not found"),
+        ):
+            result = self.b.list_models()
+        assert result == []
 
 
 class TestClaudeBackend:
@@ -111,6 +141,17 @@ class TestClaudeBackend:
     def test_resume(self):
         cmd = self.b.build_resume_command("sess-456")
         assert "sess-456" in cmd
+
+    # --- v2 tests ---
+
+    def test_list_models_returns_known_aliases(self):
+        result = self.b.list_models()
+        assert result == ["haiku", "sonnet", "opus", "opusplan"]
+
+    def test_list_models_no_version_numbers(self):
+        result = self.b.list_models()
+        for model in result:
+            assert "-20" not in model, f"Model '{model}' contains a date suffix"
 
 
 class TestGeminiBackend:
@@ -140,6 +181,14 @@ class TestGeminiBackend:
         assert "--resume" in cmd
         assert "session-7" in cmd
 
+    # --- v2 tests ---
+
+    def test_list_models_returns_not_supported(self):
+        result = self.b.list_models()
+        assert isinstance(result, list)
+        assert len(result) == 1
+        assert "not supported" in result[0].lower()
+
 
 class TestCodexBackend:
     def setup_method(self):
@@ -168,8 +217,13 @@ class TestCodexBackend:
         assert "--resume" in cmd
         assert "whatever" in cmd
 
-    def test_available_models_include_gpt_5_4(self):
-        assert "gpt-5.4" in self.b.available_models()
+    # --- v2 tests ---
+
+    def test_list_models_returns_not_supported(self):
+        result = self.b.list_models()
+        assert isinstance(result, list)
+        assert len(result) == 1
+        assert "not supported" in result[0].lower()
 
 
 class TestRegistry:
@@ -190,6 +244,16 @@ class TestRegistry:
 
     def test_detect_default_returns_string(self):
         pass
+
+    # --- v2 tests ---
+
+    def test_available_models_removed(self):
+        """Verify available_models() no longer exists on any backend instance."""
+        for backend_name in ["cursor", "claude", "gemini", "codex"]:
+            b = get_backend(backend_name)
+            assert not hasattr(b, "available_models"), (
+                f"Backend '{backend_name}' still has deprecated available_models()"
+            )
 
 
 class TestModelRouter:
