@@ -89,7 +89,12 @@ class TestCursorBackend:
         assert all(isinstance(m, str) for m in result)
 
     def test_list_models_contains_auto(self):
-        result = self.b.list_models()
+        fake_stderr = "Available models: auto, sonnet-4.6, opus-4.6"
+        fake_result = MagicMock()
+        fake_result.stderr = fake_stderr
+        fake_result.returncode = 1
+        with patch("phalanx.backends.cursor.subprocess.run", return_value=fake_result):
+            result = self.b.list_models()
         assert "auto" in result
 
     def test_list_models_parses_cli_output(self):
