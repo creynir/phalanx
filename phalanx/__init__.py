@@ -1,3 +1,8 @@
 """Phalanx — Multi-Agent Orchestration System."""
 
-__version__ = "2.1.0"
+from importlib.metadata import version, PackageNotFoundError
+
+try:
+    __version__ = version("phalanx-cli")
+except PackageNotFoundError:
+    __version__ = "unknown"
