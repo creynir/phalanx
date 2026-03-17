@@ -86,6 +86,8 @@ def team_create_cmd(ctx, task, config_path, agents, backend, model, idle_timeout
         from phalanx.team.config import load_team_config_v2, v2_to_v1_team_config, validate_team_models
         from phalanx.team.create import create_team_from_config
         tc_v2 = load_team_config_v2(Path(config_path))
+        # Respect auto_approve from config file; CLI flag takes precedence
+        auto_approve = auto_approve or tc_v2.auto_approve
         tc = v2_to_v1_team_config(tc_v2, task=task or "")
         validate_team_models(tc, backend_name, backend_overrides=cfg.backend_overrides)
         bes = {s.backend or resolve_backend_for_role(s.role, backend_name, cfg.backend_overrides) for s in tc.agents}

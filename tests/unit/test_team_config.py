@@ -349,6 +349,16 @@ class TestV2HappyPath:
         cfg = parse_team_config_v2(data)
         assert cfg is not None
 
+    def test_auto_approve_defaults_to_false(self):
+        cfg = parse_team_config_v2(_valid_v2())
+        assert cfg.auto_approve is False
+
+    def test_auto_approve_true_is_parsed(self):
+        data = _valid_v2()
+        data["auto_approve"] = True
+        cfg = parse_team_config_v2(data)
+        assert cfg.auto_approve is True
+
     def test_multiple_agents_accepted(self):
         data = _valid_v2()
         data["agents"].append(

@@ -4,54 +4,55 @@ You have `phalanx` installed as a CLI tool for managing teams of AI agents.
 When the user asks you to parallelize work, delegate tasks, spin up agents,
 or do anything that benefits from multiple agents — use phalanx.
 
-## Available Tools (shell commands)
+## As a WORKER agent (most common)
 
-### Team lifecycle
+If you were spawned by phalanx to do a task, you MUST signal completion by running:
+
 ```bash
-# Create a team (--auto-approve is REQUIRED, always include it)
-phalanx --auto-approve create-team --task "description" --agents <role>[:<count>],... [--worktree] [--idle-timeout 3600] [--max-runtime 7200] --json
-
-# Check team progress
-phalanx team-status <team-id> --json
-
-# Get results when complete
-phalanx team-result <team-id> --json
-
-# Send a message to team lead (steer direction, ask for updates)
-phalanx message <team-id> "instruction"
-
-# Send a message to a specific worker agent (give feedback, unblock)
-phalanx message-agent <agent-id> "instruction"
-
-# Read a specific agent's artifact
-phalanx agent-result <agent-id> --json
-
-# Stop and clean up
-phalanx stop <team-id>
-
-# Resume a stopped team
-phalanx resume <team-id>
-
-# List all teams
-phalanx status --json
+phalanx agent done --output '{"key": "value", "findings": "..."}'
+# For failures:
+phalanx agent done --output '{"error": "reason"}' --failed
+# For escalations:
+phalanx agent done --output '{"reason": "needs human input"}' --escalate
 ```
 
-### Agent roles
-Available roles: `researcher`, `coder`, `reviewer`, `architect`
-Phalanx picks the optimal model for each role automatically.
-Example: `--agents researcher,coder:2,reviewer`
+**This is mandatory.** The team lead and monitor are waiting for your artifact.
+Run it as the LAST command after completing your work.
 
-## Workflow
-1. Create team: `phalanx --auto-approve create-team --task "..." --agents researcher,coder:2 --json`
-2. Poll status: `phalanx team-status <team-id> --json` (every 30-60s)
-3. Steer the team: `phalanx message <team-id> "focus on X"` or message individual agents
-4. Read results: `phalanx team-result <team-id> --json` or per-agent: `phalanx agent-result <agent-id> --json`
-5. **Persist results yourself** — write important findings to workspace files
-6. Clean up: `phalanx stop <team-id>`
+## As a LEAD agent (orchestrator)
+
+### Team & agent commands
+```bash
+# List all agents in your team and their status
+phalanx team status $PHALANX_TEAM_ID
+
+# Check full team status
+phalanx team status <team-id>
+
+# Get a specific agent's artifact/result
+phalanx agent result <agent-id>
+
+# Send a message to a specific agent
+phalanx msg send <agent-id> "instruction"
+
+# Resume a suspended/dead agent
+phalanx agent resume <agent-id>
+
+# Stop the whole team
+phalanx team stop <team-id>
+
+# Create a new team (if you need to spin up sub-teams)
+phalanx team create --task "description" --agents lead,coder:2 --auto-approve
+```
+
+### Workflow as lead
+1. Check worker status: `phalanx agent list`
+2. Wait for workers to complete (artifact_status = success/failure)
+3. Read results: `phalanx agent result <agent-id>`
+4. Synthesize and write your own artifact: `phalanx agent done --output '{...}'`
 
 ## Critical Rules
-- Team artifacts are **EPHEMERAL** — deleted after 24h of inactivity
-- Always persist important results to workspace files yourself
-- Use `--worktree` when agents modify shared files to avoid conflicts
-- All commands support `--json` for structured output
-- Sub-agents run autonomously with full permissions in isolated sessions
+- **Workers MUST run `phalanx agent done` when finished** — never just stop or idle
+- The team lead waits for worker artifacts before synthesizing
+- Use `phalanx agent list` to check team progress (not `team status`)
+- `PHALANX_AGENT_ID` and `PHALANX_TEAM_ID` env vars are set in your session

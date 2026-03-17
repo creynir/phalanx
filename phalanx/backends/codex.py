@@ -31,7 +31,8 @@ class CodexBackend(AgentBackend):
         if auto_approve:
             cmd.extend(self.auto_approve_flags())
         if model:
-            cmd += ["--model", model]
+            # Codex uses -c model="<name>" not --model; --model is for local OSS only
+            cmd += ["-c", f'model="{model}"']
         if soul_file:
             cmd.append(f"@{soul_file} @{prompt}")
         else:

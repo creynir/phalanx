@@ -312,6 +312,7 @@ class V2TeamConfig:
     agents: list[V2AgentSpec]
     idle_timeout: int = 1800
     max_runtime: int = 1800
+    auto_approve: bool = False
 
 
 def _v2_check_backend(backend: str | None, context: str) -> None:
@@ -445,6 +446,7 @@ def parse_team_config_v2(data: dict) -> V2TeamConfig:
         agents=agents,
         idle_timeout=int(data.get("idle_timeout", 1800)),
         max_runtime=int(data.get("max_runtime", 1800)),
+        auto_approve=bool(data.get("auto_approve", False)),
     )
 
 
