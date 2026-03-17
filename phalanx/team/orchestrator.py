@@ -353,6 +353,11 @@ def resume_team(
         agent_id = agent["id"]
         backend = get_backend(agent.get("backend", "cursor"))
 
+        # Clear artifact_status BEFORE spawn so the agent cannot race-write
+        # a new artifact before we clear it (spawn blocks during startup detection).
+        if agent["status"] == "completed":
+            db.update_agent(agent_id, artifact_status=None)
+
         agent_proc = _resume_agent_with_context(
             phalanx_root,
             db,
@@ -365,8 +370,6 @@ def resume_team(
             continue
 
         db.update_agent(agent_id, status="running")
-        if agent["status"] == "completed":
-            db.update_agent(agent_id, artifact_status=None)
         heartbeat_monitor.register(agent_id, agent_proc.stream_log)
         resumed.append(agent_id)
 
@@ -400,6 +403,11 @@ def resume_single_agent(
     team_id = agent["team_id"]
     backend = get_backend(agent.get("backend", "cursor"))
 
+    # Clear artifact_status BEFORE spawn so the agent cannot race-write
+    # a new artifact before we clear it (spawn blocks during startup detection).
+    if agent["status"] == "completed":
+        db.update_agent(agent_id, artifact_status=None)
+
     agent_proc = _resume_agent_with_context(
         phalanx_root,
         db,
@@ -412,8 +420,6 @@ def resume_single_agent(
         raise ValueError(f"Cannot resume agent {agent_id}: no task in DB and no task.md on disk")
 
     db.update_agent(agent_id, status="running")
-    if agent["status"] == "completed":
-        db.update_agent(agent_id, artifact_status=None)
     heartbeat_monitor.register(agent_id, agent_proc.stream_log)
     logger.info("Resumed agent %s in team %s", agent_id, team_id)
 
