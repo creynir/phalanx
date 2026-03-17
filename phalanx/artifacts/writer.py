@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+import time
 from pathlib import Path
 
 from phalanx.artifacts.schema import Artifact
@@ -48,14 +49,17 @@ def write_artifact(
             pass
         raise
 
-    # Update DB if available
+    # Update DB if available — retry on SQLite lock contention
     if db and artifact.agent_id:
-        try:
-            db.update_agent(
-                artifact.agent_id,
-                artifact_status=artifact.status,
-            )
-        except Exception:
-            pass
+        for attempt in range(5):
+            try:
+                db.update_agent(
+                    artifact.agent_id,
+                    artifact_status=artifact.status,
+                )
+                break
+            except Exception:
+                if attempt < 4:
+                    time.sleep(0.2 * (attempt + 1))
 
     return target

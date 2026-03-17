@@ -446,7 +446,28 @@ def run_team_monitor(
                         db.update_heartbeat(agent_id)
 
                     # Check for newly written artifacts regardless of stall events.
+                    # Also reconcile: if artifact.json exists on disk but DB has no
+                    # artifact_status (e.g. DB write failed due to SQLite lock), sync now.
                     refreshed = db.get_agent(agent_id)
+                    if refreshed and not refreshed.get("artifact_status"):
+                        artifact_file = (
+                            phalanx_root / "teams" / team_id / "agents" / agent_id / "artifact.json"
+                            if phalanx_root else None
+                        )
+                        if artifact_file and artifact_file.exists():
+                            try:
+                                artifact_data = json.loads(artifact_file.read_text())
+                                disk_status = artifact_data.get("status")
+                                if disk_status in ("success", "failure", "escalation"):
+                                    db.update_agent(agent_id, artifact_status=disk_status)
+                                    logger.info(
+                                        "Reconciled artifact from disk for %s (status=%s)",
+                                        agent_id,
+                                        disk_status,
+                                    )
+                                    refreshed = db.get_agent(agent_id)
+                            except Exception:
+                                pass
                     if refreshed and refreshed.get("artifact_status"):
                         prev_status = agent.get("artifact_status")
                         new_status = refreshed["artifact_status"]

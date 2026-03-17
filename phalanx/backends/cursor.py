@@ -1,7 +1,8 @@
 """Cursor CLI backend adapter.
 
-Phase 3: TUI mode only — no --print flag. The agent runs interactively
-inside tmux and all output is captured via pipe-pane.
+Uses --print mode for automation: agent runs non-interactively, processes the
+task, calls phalanx agent done, and exits. The phalanx process manager detects
+the exit and reads the artifact from the DB.
 """
 
 from __future__ import annotations
@@ -46,17 +47,21 @@ class CursorBackend(AgentBackend):
         cmd = [self.binary_name()]
         if auto_approve:
             cmd.extend(self.auto_approve_flags())
+        # --print: non-interactive mode — runs the task, writes output to stdout, then exits.
+        # This is the only reliable way to automate cursor agent via tmux because
+        # the TUI input box does not respond to Enter via send_keys.
+        cmd.append("--print")
         if model:
             cmd += ["--model", self._normalize_model(model)]
         if worktree:
             cmd += ["--worktree", worktree]
-        return cmd
-
-    def format_deferred_prompt(self, prompt: str) -> str:
+        # Pass prompt as positional arg
         prompt_path = Path(prompt)
         if prompt_path.exists():
-            return f"Read and execute instructions from {prompt_path.absolute()}"
-        return prompt
+            cmd.append(f"Read and execute instructions from {prompt_path.absolute()}")
+        else:
+            cmd.append(prompt)
+        return cmd
 
     def build_resume_command(self, chat_id: str) -> list[str]:
         return [self.binary_name(), "--resume", chat_id]
@@ -96,7 +101,8 @@ class CursorBackend(AgentBackend):
         return ["--yolo"]
 
     def deferred_prompt(self) -> bool:
-        return True
+        # Prompt is passed on the command line; no TUI typing needed.
+        return False
 
     def tui_ready_indicator(self) -> str:
         return "/ commands"
