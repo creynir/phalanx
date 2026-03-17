@@ -1,4 +1,4 @@
-"""E2E test: single agent mode via phalanx run."""
+"""E2E test: single agent mode via phalanx run (v2)."""
 
 from __future__ import annotations
 
@@ -31,11 +31,13 @@ class TestSingleAgent:
             timeout=10,
         )
         assert result.returncode == 0
-        assert "create-team" in result.stdout
+        # v2: groups are listed
+        assert "team" in result.stdout
+        assert "agent" in result.stdout
 
     def test_phalanx_status(self):
         result = subprocess.run(
-            ["phalanx", "status"],
+            ["phalanx", "--root", "/tmp/phalanx-e2e-test", "team", "list"],
             capture_output=True,
             text=True,
             timeout=10,
@@ -44,7 +46,7 @@ class TestSingleAgent:
 
     def test_phalanx_list_teams(self):
         result = subprocess.run(
-            ["phalanx", "--json-output", "list-teams"],
+            ["phalanx", "--json-output", "--root", "/tmp/phalanx-e2e-test", "team", "list"],
             capture_output=True,
             text=True,
             timeout=10,

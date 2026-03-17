@@ -46,11 +46,11 @@ class TestIT002_CreateAgent:
 
     def test_creates_worker_with_pending_status(self, db):
         db.create_team("t1", "task")
-        db.create_agent("w1", "t1", "write code", role="worker")
+        db.create_agent("w1", "t1", "write code", role="agent")
         agent = db.get_agent("w1")
         assert agent is not None
         assert agent["status"] == "pending"
-        assert agent["role"] == "worker"
+        assert agent["role"] == "agent"
         assert agent["team_id"] == "t1"
 
     def test_creates_lead_with_pending_status(self, db):

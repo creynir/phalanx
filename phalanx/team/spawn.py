@@ -76,11 +76,13 @@ def spawn_agent(
         logger.error("Failed to spawn agent %s", agent_id)
         raise
 
+    # Normalize v1 role strings to v2 DB values: only "lead" and "agent" are valid.
+    db_role = role if role in ("lead", "agent") else "agent"
     db.create_agent(
         agent_id=agent_id,
         team_id=team_id,
         task=task,
-        role=role,
+        role=db_role,
         model=model,
         backend=backend_name,
         worktree=effective_worktree,
@@ -166,9 +168,9 @@ def _resolve_soul_file(phalanx_root: Path, role: str) -> Path | None:
         import logging
 
         logging.getLogger(__name__).warning(
-            "No specific soul file for role '%s', falling back to worker.md", role
+            "No specific soul file for role '%s', falling back to agent.md", role
         )
-    filename = _SOUL_FILE_MAP.get(role, "worker.md")
+    filename = _SOUL_FILE_MAP.get(role, "agent.md")
 
     soul_dir = phalanx_root / "soul"
     path = soul_dir / filename

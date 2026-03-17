@@ -13,7 +13,9 @@ import time
 from contextlib import contextmanager
 from pathlib import Path
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
+
+_VALID_AGENT_ROLES = frozenset({"lead", "agent"})
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS teams (
@@ -28,7 +30,7 @@ CREATE TABLE IF NOT EXISTS teams (
 CREATE TABLE IF NOT EXISTS agents (
     id              TEXT PRIMARY KEY,
     team_id         TEXT NOT NULL REFERENCES teams(id),
-    role            TEXT NOT NULL DEFAULT 'worker',
+    role            TEXT NOT NULL DEFAULT 'agent' CHECK(role IN ('lead', 'agent')),
     task            TEXT NOT NULL,
     status          TEXT NOT NULL DEFAULT 'pending',
     pid             INTEGER,
@@ -45,7 +47,8 @@ CREATE TABLE IF NOT EXISTS agents (
     prompt_state    TEXT,
     prompt_screen   TEXT,
     ghost_restart_count INTEGER DEFAULT 0,
-    max_ghost_restarts  INTEGER DEFAULT 5
+    max_ghost_restarts  INTEGER DEFAULT 5,
+    soul_path       TEXT
 );
 
 CREATE TABLE IF NOT EXISTS feed (
@@ -83,21 +86,7 @@ CREATE TABLE IF NOT EXISTS token_usage (
     input_tokens    INTEGER NOT NULL DEFAULT 0,
     output_tokens   INTEGER NOT NULL DEFAULT 0,
     total_tokens    INTEGER NOT NULL DEFAULT 0,
-    estimated_cost  REAL,
     recorded_at     REAL NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS debt_records (
-    id                  TEXT PRIMARY KEY,
-    team_id             TEXT NOT NULL,
-    skill_run_id        TEXT,
-    step_name           TEXT,
-    agent_id            TEXT NOT NULL,
-    severity            TEXT NOT NULL CHECK(severity IN ('low','medium','high','critical')),
-    category            TEXT NOT NULL CHECK(category IN ('scope_reduction','workaround','deferred_test','deferred_fix')),
-    description         TEXT NOT NULL,
-    proposed_resolution TEXT,
-    created_at          REAL NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS team_context (
@@ -233,10 +222,13 @@ class StateDB:
         if from_version < 6:
             self._migrate_to_v6(conn)
 
+        if from_version < 7:
+            self._migrate_to_v7(conn)
+
         conn.execute("UPDATE schema_version SET version = ?", (SCHEMA_VERSION,))
 
     def _migrate_to_v5(self, conn: sqlite3.Connection) -> None:
-        """v5: Add token_usage, debt_records, team_context, skill_runs tables."""
+        """v5: Add token_usage, team_context, skill_runs tables."""
         tables = {
             r[0]
             for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
@@ -254,23 +246,7 @@ class StateDB:
                 "input_tokens INTEGER NOT NULL DEFAULT 0, "
                 "output_tokens INTEGER NOT NULL DEFAULT 0, "
                 "total_tokens INTEGER NOT NULL DEFAULT 0, "
-                "estimated_cost REAL, "
                 "recorded_at REAL NOT NULL)"
-            )
-
-        if "debt_records" not in tables:
-            conn.execute(
-                "CREATE TABLE debt_records ("
-                "id TEXT PRIMARY KEY, "
-                "team_id TEXT NOT NULL, "
-                "skill_run_id TEXT, "
-                "step_name TEXT, "
-                "agent_id TEXT NOT NULL, "
-                "severity TEXT NOT NULL CHECK(severity IN ('low','medium','high','critical')), "
-                "category TEXT NOT NULL CHECK(category IN ('scope_reduction','workaround','deferred_test','deferred_fix')), "
-                "description TEXT NOT NULL, "
-                "proposed_resolution TEXT, "
-                "created_at REAL NOT NULL)"
             )
 
         if "team_context" not in tables:
@@ -329,6 +305,12 @@ class StateDB:
                 "applied_at REAL)"
             )
 
+    def _migrate_to_v7(self, conn: sqlite3.Connection) -> None:
+        """v7: Add soul_path column to agents table."""
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(agents)").fetchall()}
+        if "soul_path" not in cols:
+            conn.execute("ALTER TABLE agents ADD COLUMN soul_path TEXT")
+
     @contextmanager
     def transaction(self):
         conn = self._connect()
@@ -380,12 +362,12 @@ class StateDB:
     def delete_team(self, team_id: str) -> None:
         with self.transaction() as conn:
             conn.execute("DELETE FROM token_usage WHERE team_id = ?", (team_id,))
-            conn.execute("DELETE FROM debt_records WHERE team_id = ?", (team_id,))
             conn.execute("DELETE FROM team_context WHERE team_id = ?", (team_id,))
             conn.execute("DELETE FROM skill_runs WHERE team_id = ?", (team_id,))
             conn.execute("DELETE FROM events WHERE team_id = ?", (team_id,))
             conn.execute("DELETE FROM feed WHERE team_id = ?", (team_id,))
             conn.execute("DELETE FROM file_locks WHERE team_id = ?", (team_id,))
+            conn.execute("DELETE FROM engineering_manager_state WHERE team_id = ?", (team_id,))
             conn.execute("DELETE FROM agents WHERE team_id = ?", (team_id,))
             conn.execute("DELETE FROM teams WHERE id = ?", (team_id,))
 
@@ -396,19 +378,24 @@ class StateDB:
         agent_id: str,
         team_id: str,
         task: str,
-        role: str = "worker",
+        role: str = "agent",
         model: str | None = None,
         backend: str = "cursor",
         worktree: str | None = None,
+        soul_path: str | None = None,
     ) -> None:
+        if role not in _VALID_AGENT_ROLES:
+            raise ValueError(
+                f"Invalid agent role {role!r}. Must be one of: {sorted(_VALID_AGENT_ROLES)}"
+            )
         now = time.time()
         with self.transaction() as conn:
             conn.execute(
                 "INSERT INTO agents "
                 "(id, team_id, role, task, status, model, backend, worktree, "
-                " created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?)",
-                (agent_id, team_id, role, task, model, backend, worktree, now, now),
+                " created_at, updated_at, soul_path) "
+                "VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?)",
+                (agent_id, team_id, role, task, model, backend, worktree, now, now, soul_path),
             )
 
     def get_agent(self, agent_id: str) -> dict | None:
@@ -416,7 +403,19 @@ class StateDB:
             row = conn.execute("SELECT * FROM agents WHERE id = ?", (agent_id,)).fetchone()
             return dict(row) if row else None
 
+    def find_team_for_agent(self, agent_id: str) -> str | None:
+        """Return the team_id for the given agent_id, or None if not found."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT team_id FROM agents WHERE id = ?", (agent_id,)
+            ).fetchone()
+            return row["team_id"] if row else None
+
     def update_agent(self, agent_id: str, **kwargs) -> None:
+        if "role" in kwargs and kwargs["role"] not in _VALID_AGENT_ROLES:
+            raise ValueError(
+                f"Invalid agent role {kwargs['role']!r}. Must be one of: {sorted(_VALID_AGENT_ROLES)}"
+            )
         kwargs["updated_at"] = time.time()
         set_clause = ", ".join(f"{k} = ?" for k in kwargs)
         values = list(kwargs.values()) + [agent_id]
@@ -458,7 +457,7 @@ class StateDB:
 
     def get_feed(self, team_id: str, limit: int = 50, since: float | None = None) -> list[dict]:
         with self._connect() as conn:
-            if since:
+            if since is not None:
                 rows = conn.execute(
                     "SELECT * FROM feed WHERE team_id = ? AND created_at > ? "
                     "ORDER BY created_at DESC LIMIT ?",
@@ -537,15 +536,14 @@ class StateDB:
         model: str | None = None,
         input_tokens: int = 0,
         output_tokens: int = 0,
-        estimated_cost: float | None = None,
     ) -> None:
         total = input_tokens + output_tokens
         with self.transaction() as conn:
             conn.execute(
                 "INSERT INTO token_usage "
                 "(team_id, agent_id, role, backend, model, input_tokens, "
-                " output_tokens, total_tokens, estimated_cost, recorded_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                " output_tokens, total_tokens, recorded_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     team_id,
                     agent_id,
@@ -555,7 +553,6 @@ class StateDB:
                     input_tokens,
                     output_tokens,
                     total,
-                    estimated_cost,
                     time.time(),
                 ),
             )
@@ -573,48 +570,6 @@ class StateDB:
             rows = conn.execute(
                 "SELECT * FROM token_usage WHERE agent_id = ? ORDER BY recorded_at",
                 (agent_id,),
-            ).fetchall()
-            return [dict(r) for r in rows]
-
-    # -- Debt Records (v1.0.0) --
-
-    def create_debt_record(
-        self,
-        debt_id: str,
-        team_id: str,
-        agent_id: str,
-        severity: str,
-        category: str,
-        description: str,
-        skill_run_id: str | None = None,
-        step_name: str | None = None,
-        proposed_resolution: str | None = None,
-    ) -> None:
-        with self.transaction() as conn:
-            conn.execute(
-                "INSERT INTO debt_records "
-                "(id, team_id, skill_run_id, step_name, agent_id, severity, "
-                " category, description, proposed_resolution, created_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (
-                    debt_id,
-                    team_id,
-                    skill_run_id,
-                    step_name,
-                    agent_id,
-                    severity,
-                    category,
-                    description,
-                    proposed_resolution,
-                    time.time(),
-                ),
-            )
-
-    def get_team_debt(self, team_id: str) -> list[dict]:
-        with self._connect() as conn:
-            rows = conn.execute(
-                "SELECT * FROM debt_records WHERE team_id = ? ORDER BY created_at",
-                (team_id,),
             ).fetchall()
             return [dict(r) for r in rows]
 

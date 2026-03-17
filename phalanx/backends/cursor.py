@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import re
 import shutil
+import subprocess
 from pathlib import Path
 
 from .base import AgentBackend
@@ -26,9 +27,11 @@ class CursorBackend(AgentBackend):
         soul_file: Path | None = None,
         model: str | None = None,
         worktree: str | None = None,
-        auto_approve: bool = True,
+        auto_approve: bool = False,
     ) -> list[str]:
         cmd = [self.binary_name()]
+        if auto_approve:
+            cmd.extend(self.auto_approve_flags())
         if model:
             cmd += ["--model", model]
         if worktree:
@@ -58,22 +61,22 @@ class CursorBackend(AgentBackend):
             return {"tokens": int(match.group(1))}
         return None
 
-    def available_models(self) -> list[str]:
-        return [
-            "composer-1.5",
-            "sonnet-4.6",
-            "sonnet-4.6-thinking",
-            "opus-4.6",
-            "opus-4.6-thinking",
-            "gemini-3.1-pro",
-            "gemini-3-pro",
-            "gemini-3-flash",
-            "gpt-5.4-high",
-            "gpt-5.2",
-            "o3",
-            "grok",
-            "kimi-k2.5",
-        ]
+    def list_models(self) -> list[str]:
+        try:
+            result = subprocess.run(
+                [self.binary_name(), "--model", "--help"],
+                capture_output=True,
+                text=True,
+            )
+            marker = "Available models: "
+            if marker in result.stderr:
+                models_str = result.stderr.split(marker, 1)[1]
+                # Trim at the first newline or end of string
+                models_str = models_str.split("\n")[0].strip()
+                return [m.strip() for m in models_str.split(", ") if m.strip()]
+        except Exception:
+            pass
+        return []
 
     def auto_approve_flags(self) -> list[str]:
         return ["--yolo"]

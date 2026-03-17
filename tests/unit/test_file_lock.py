@@ -17,8 +17,8 @@ from phalanx.comms.file_lock import (
 def db(tmp_path):
     d = StateDB(db_path=tmp_path / "test.db")
     d.create_team("t1", "task", "cursor")
-    d.create_agent("a1", "t1", "worker", "task", "cursor")
-    d.create_agent("a2", "t1", "worker", "task", "cursor")
+    d.create_agent("a1", "t1", task="do work", role="agent", backend="cursor")
+    d.create_agent("a2", "t1", task="do work", role="agent", backend="cursor")
     yield d
 
 

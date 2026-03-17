@@ -21,7 +21,7 @@ from phalanx.monitor.team_monitor import _StreamLogCostScanner
 def tmp_db(tmp_path):
     db = StateDB(db_path=tmp_path / "state.db")
     db.create_team("t1", "test task")
-    db.create_agent("w1", "t1", "code", role="worker", backend="cursor")
+    db.create_agent("w1", "t1", "code", role="agent", backend="cursor")
     return db
 
 
@@ -220,7 +220,7 @@ class TestGetTeamStatusIncludesCosts:
     def test_costs_included_in_status(self, tmp_path):
         db = StateDB(db_path=tmp_path / "state.db")
         db.create_team("t1", "test task")
-        db.create_agent("w1", "t1", "code", role="worker", backend="cursor")
+        db.create_agent("w1", "t1", "code", role="agent", backend="cursor")
 
         agg = CostAggregator(db)
         agg.record_usage("t1", "w1", "worker", "cursor", "claude-4-opus", 1000, 500)
@@ -246,7 +246,6 @@ class TestGetTeamStatusIncludesCosts:
         costs = status["costs"]
         assert costs is not None
         assert costs["total_tokens"] == 0
-        assert costs["estimated_cost"] is None
 
     def test_team_not_found(self, tmp_path):
         db = StateDB(db_path=tmp_path / "state.db")

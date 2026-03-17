@@ -1,4 +1,4 @@
-"""Integration tests for CLI commands using Click test runner."""
+"""Integration tests for CLI commands using Click test runner (v2)."""
 
 from __future__ import annotations
 
@@ -30,52 +30,59 @@ class TestHelp:
     def test_help(self, runner):
         result = runner.invoke(cli, ["--help"])
         assert result.exit_code == 0
-        assert "create-team" in result.output
-        assert "status" in result.output
+        # v2: groups are listed
+        assert "team" in result.output
+        assert "agent" in result.output
 
 
 class TestStatus:
-    def test_status_runs(self, runner):
-        result = runner.invoke(cli, ["status"])
+    def test_status_runs(self, runner, tmp_path):
+        result = runner.invoke(cli, ["--root", str(tmp_path / ".phalanx"), "team", "list"])
         assert result.exit_code == 0
-        assert "No active teams" in result.output or "Teams" in result.output
+        assert "No teams found" in result.output or "team" in result.output.lower()
 
-    def test_status_json(self, runner):
-        result = runner.invoke(cli, ["--json-output", "status"])
+    def test_status_json(self, runner, tmp_path):
+        result = runner.invoke(
+            cli, ["--json-output", "--root", str(tmp_path / ".phalanx"), "team", "list"]
+        )
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert isinstance(data, dict)
 
 
 class TestListTeams:
-    def test_list_teams_empty(self, runner):
-        result = runner.invoke(cli, ["--json-output", "list-teams"])
+    def test_list_teams_empty(self, runner, tmp_path):
+        result = runner.invoke(
+            cli, ["--json-output", "--root", str(tmp_path / ".phalanx"), "team", "list"]
+        )
         assert result.exit_code == 0
 
 
 class TestWriteArtifact:
-    def test_write_artifact_missing_status(self, runner):
-        result = runner.invoke(cli, ["write-artifact", "--output", '{"done": true}'])
+    def test_write_artifact_missing_output(self, runner):
+        """agent done without --output fails."""
+        result = runner.invoke(cli, ["agent", "done"])
         assert result.exit_code != 0
 
     def test_write_artifact_missing_env_vars(self, runner):
         result = runner.invoke(
             cli,
-            ["write-artifact", "--status", "success", "--output", '{"done": true}'],
+            ["agent", "done", "--output", '{"done": true}'],
             env={"PHALANX_TEAM_ID": "", "PHALANX_AGENT_ID": ""},
         )
         assert result.exit_code != 0
 
 
 class TestGC:
-    def test_gc_command(self, runner):
-        result = runner.invoke(cli, ["gc"])
+    def test_gc_command(self, runner, tmp_path):
+        result = runner.invoke(
+            cli, ["--root", str(tmp_path / ".phalanx"), "team", "gc"]
+        )
         assert result.exit_code == 0
 
 
 class TestInit:
     def test_init_json(self, runner, tmp_path):
-        # We need to change cwd to temp path for init to work there, or set PHALANX_ROOT
         import os
 
         old_cwd = os.getcwd()

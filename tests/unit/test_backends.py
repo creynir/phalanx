@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -83,8 +85,36 @@ class TestCursorBackend:
         assert "--resume" in cmd
         assert "abc-123" in cmd
 
-    def test_available_models_include_composer(self):
-        assert "composer-1.5" in self.b.available_models()
+    # --- v2 tests ---
+
+    def test_list_models_returns_list(self):
+        result = self.b.list_models()
+        assert isinstance(result, list)
+        assert all(isinstance(m, str) for m in result)
+
+    def test_list_models_contains_auto(self):
+        result = self.b.list_models()
+        assert "auto" in result
+
+    def test_list_models_parses_cli_output(self):
+        fake_stderr = (
+            "Cannot use this model: --help. "
+            "Available models: auto, sonnet-4.6, gpt-5.4"
+        )
+        fake_result = MagicMock()
+        fake_result.stderr = fake_stderr
+        fake_result.returncode = 1
+        with patch("phalanx.backends.cursor.subprocess.run", return_value=fake_result):
+            result = self.b.list_models()
+        assert result == ["auto", "sonnet-4.6", "gpt-5.4"]
+
+    def test_list_models_handles_cli_failure(self):
+        with patch(
+            "phalanx.backends.cursor.subprocess.run",
+            side_effect=FileNotFoundError("agent not found"),
+        ):
+            result = self.b.list_models()
+        assert result == []
 
 
 class TestClaudeBackend:
@@ -98,10 +128,32 @@ class TestClaudeBackend:
         pass
 
     def test_headless_basic(self):
+        # Without auto_approve, --dangerously-skip-permissions should NOT be present.
+        # No @file in the start command — prompt is delivered via deferred prompt.
         cmd = self.b.build_start_command("refactor auth")
         assert cmd[0].endswith("claude")
+        assert "--dangerously-skip-permissions" not in cmd
+        assert not any("@" in c for c in cmd)
+
+    def test_headless_auto_approve(self):
+        cmd = self.b.build_start_command("refactor auth", auto_approve=True)
         assert "--dangerously-skip-permissions" in cmd
-        assert "@refactor auth" in cmd
+
+    def test_deferred_prompt(self):
+        # Claude uses deferred prompt — file is delivered after TUI starts
+        assert self.b.deferred_prompt() is True
+        assert self.b.tui_ready_indicator() == "❯"
+
+    def test_format_deferred_prompt_file(self, tmp_path):
+        task_file = tmp_path / "task.md"
+        task_file.write_text("Execute this task.")
+        deferred = self.b.format_deferred_prompt(str(task_file))
+        assert deferred.startswith("@")
+        assert str(task_file.absolute()) in deferred
+
+    def test_format_deferred_prompt_nonexistent(self):
+        deferred = self.b.format_deferred_prompt("raw prompt text")
+        assert deferred == "raw prompt text"
 
     def test_headless_with_model(self):
         cmd = self.b.build_start_command("task", model="opus")
@@ -111,6 +163,17 @@ class TestClaudeBackend:
     def test_resume(self):
         cmd = self.b.build_resume_command("sess-456")
         assert "sess-456" in cmd
+
+    # --- v2 tests ---
+
+    def test_list_models_returns_known_aliases(self):
+        result = self.b.list_models()
+        assert result == ["haiku", "sonnet", "opus", "opusplan"]
+
+    def test_list_models_no_version_numbers(self):
+        result = self.b.list_models()
+        for model in result:
+            assert "-20" not in model, f"Model '{model}' contains a date suffix"
 
 
 class TestGeminiBackend:
@@ -124,10 +187,15 @@ class TestGeminiBackend:
         pass
 
     def test_headless_basic(self):
+        # Without auto_approve: no permission flag
         cmd = self.b.build_start_command("research topic")
         assert cmd[0].endswith("gemini")
-        assert "--yolo" in cmd
+        assert "--yolo" not in cmd
         assert "@research topic" in cmd
+
+    def test_headless_auto_approve(self):
+        cmd = self.b.build_start_command("research topic", auto_approve=True)
+        assert "--yolo" in cmd
 
     def test_headless_with_policy(self, tmp_path):
         policy = tmp_path / "soul.md"
@@ -139,6 +207,14 @@ class TestGeminiBackend:
         cmd = self.b.build_resume_command("session-7")
         assert "--resume" in cmd
         assert "session-7" in cmd
+
+    # --- v2 tests ---
+
+    def test_list_models_returns_not_supported(self):
+        result = self.b.list_models()
+        assert isinstance(result, list)
+        assert len(result) == 1
+        assert "not supported" in result[0].lower()
 
 
 class TestCodexBackend:
@@ -152,15 +228,20 @@ class TestCodexBackend:
         pass
 
     def test_interactive_basic(self):
+        # Without auto_approve: no permission flag
         cmd = self.b.build_start_command("fix bug")
         assert cmd[0].endswith("codex")
-        assert "--full-auto" in cmd
+        assert "--full-auto" not in cmd
         assert "@fix bug" in cmd
+
+    def test_interactive_auto_approve(self):
+        cmd = self.b.build_start_command("fix bug", auto_approve=True)
+        assert "--full-auto" in cmd
 
     def test_headless_basic(self):
         cmd = self.b.build_start_command("write tests")
         assert cmd[0].endswith("codex")
-        assert "--full-auto" in cmd
+        assert "--full-auto" not in cmd
         assert "@write tests" in cmd
 
     def test_resume(self):
@@ -168,8 +249,13 @@ class TestCodexBackend:
         assert "--resume" in cmd
         assert "whatever" in cmd
 
-    def test_available_models_include_gpt_5_4(self):
-        assert "gpt-5.4" in self.b.available_models()
+    # --- v2 tests ---
+
+    def test_list_models_returns_not_supported(self):
+        result = self.b.list_models()
+        assert isinstance(result, list)
+        assert len(result) == 1
+        assert "not supported" in result[0].lower()
 
 
 class TestRegistry:
@@ -190,6 +276,16 @@ class TestRegistry:
 
     def test_detect_default_returns_string(self):
         pass
+
+    # --- v2 tests ---
+
+    def test_available_models_removed(self):
+        """Verify available_models() no longer exists on any backend instance."""
+        for backend_name in ["cursor", "claude", "gemini", "codex"]:
+            b = get_backend(backend_name)
+            assert not hasattr(b, "available_models"), (
+                f"Backend '{backend_name}' still has deprecated available_models()"
+            )
 
 
 class TestModelRouter:

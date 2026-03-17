@@ -17,7 +17,6 @@ import pytest
 from phalanx.artifacts.schema import Artifact
 from phalanx.artifacts.writer import write_artifact
 from phalanx.costs.aggregator import CostAggregator
-from phalanx.costs.pricing import DEFAULT_COST_TABLE, estimate_cost
 from phalanx.db import StateDB
 from phalanx.monitor.stall import _check_process_exited, _check_rate_limited
 from phalanx.process.manager import AgentProcess, ProcessManager
@@ -31,8 +30,8 @@ def tmp_db():
     with tempfile.TemporaryDirectory() as td:
         db = StateDB(db_path=Path(td) / "state.db")
         db.create_team("t1", "test task")
-        db.create_agent("w1", "t1", "code", role="worker", backend="cursor")
-        db.create_agent("w2", "t1", "test", role="worker", backend="cursor")
+        db.create_agent("w1", "t1", "code", role="agent", backend="cursor")
+        db.create_agent("w2", "t1", "test", role="agent", backend="cursor")
         yield db
 
 
@@ -42,7 +41,7 @@ def tmp_db_with_root():
         root = Path(td)
         db = StateDB(db_path=root / ".phalanx" / "state.db")
         db.create_team("t1", "test task")
-        db.create_agent("w1", "t1", "code", role="worker", backend="cursor")
+        db.create_agent("w1", "t1", "code", role="agent", backend="cursor")
         db.create_agent("lead-t1", "t1", "coordinate", role="lead", backend="cursor")
         yield db, root
 
@@ -168,7 +167,6 @@ class TestIT131_RecordUsage:
         assert r["output_tokens"] == 500
         assert r["total_tokens"] == 1500
         assert r["model"] == "claude-4-opus"
-        assert r["estimated_cost"] is not None
 
 
 class TestIT132_GetTeamCosts:
@@ -199,47 +197,6 @@ class TestIT133_GetAgentCosts:
         assert costs.total_input_tokens == 3000
         assert costs.total_output_tokens == 1300
         assert costs.records == 2
-
-
-class TestIT134_CostEstimation:
-    """IT-134: estimated_cost calculated from input/output token counts."""
-
-    def test_cost_estimation(self):
-        cost = estimate_cost("claude-4-opus", 1000, 500)
-        assert cost is not None
-        expected = 1000 * (15.0 / 1_000_000) + 500 * (75.0 / 1_000_000)
-        assert abs(cost - expected) < 1e-10
-
-
-class TestIT135_DefaultPricing:
-    """IT-135: Common models have default pricing."""
-
-    def test_default_pricing(self):
-        common_models = [
-            "claude-4-opus",
-            "claude-4-sonnet",
-            "claude-3.5-sonnet",
-            "gpt-4o",
-            "gemini-2.5-pro",
-        ]
-        for model in common_models:
-            assert model in DEFAULT_COST_TABLE, f"Missing default pricing for {model}"
-            rates = DEFAULT_COST_TABLE[model]
-            assert "input" in rates and "output" in rates
-
-
-class TestIT136_UserOverridePricing:
-    """IT-136: Override default pricing in config.json."""
-
-    def test_user_override(self, tmp_db):
-        custom_table = {"custom-model": {"input": 1.0 / 1_000_000, "output": 2.0 / 1_000_000}}
-        agg = CostAggregator(tmp_db, cost_table=custom_table)
-        agg.record_usage("t1", "w1", "worker", "test", "custom-model", 1000, 500)
-
-        costs = agg.get_agent_costs("w1")
-        assert costs.estimated_cost is not None
-        expected = 1000 * (1.0 / 1_000_000) + 500 * (2.0 / 1_000_000)
-        assert abs(costs.estimated_cost - expected) < 1e-10
 
 
 class TestIT137_ParseTokenUsageOnHeartbeat:
@@ -420,8 +377,8 @@ class TestIT180_ParseTokenUsageGarbage:
         assert len(records) == 0
 
 
-class TestIT181_CostTableMissingModel:
-    """IT-181: Unknown model → estimated_cost=null, warning logged."""
+class TestIT181_UnknownModelRecorded:
+    """IT-181: Unknown model → token usage still recorded."""
 
     def test_missing_model(self, tmp_db):
         agg = CostAggregator(tmp_db)
@@ -429,7 +386,8 @@ class TestIT181_CostTableMissingModel:
 
         records = tmp_db.get_agent_token_usage("w1")
         assert len(records) == 1
-        assert records[0]["estimated_cost"] is None
+        assert records[0]["input_tokens"] == 1000
+        assert records[0]["output_tokens"] == 500
 
 
 class TestIT182_DBWriteFailure:

@@ -23,9 +23,13 @@ class TestPromptPatterns:
         assert not _check_workspace_trust(["Just some normal text"])
 
     def test_permission_prompt(self):
-        assert _check_permission_prompt(["Allow", "this operation?"])
+        assert _check_permission_prompt(["Allow this operation?"])
         assert _check_permission_prompt(["[y/N]"])
+        assert _check_permission_prompt(["Do you want to proceed?"])
         assert not _check_permission_prompt(["Proceeding with operation..."])
+        # "approved" in agent output must NOT trigger permission_prompt
+        assert not _check_permission_prompt(['{"approved":true,"dir":"ts_foo"}'])
+        assert not _check_permission_prompt(["I wrote a success artifact with approved=true"])
 
     def test_tool_approval(self):
         assert _check_tool_approval(["Run python test.py ? ["])

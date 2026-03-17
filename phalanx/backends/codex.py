@@ -25,7 +25,7 @@ class CodexBackend(AgentBackend):
         soul_file: Path | None = None,
         model: str | None = None,
         worktree: str | None = None,
-        auto_approve: bool = True,
+        auto_approve: bool = False,
     ) -> list[str]:
         cmd = [self.binary_name()]
         if auto_approve:
@@ -55,13 +55,8 @@ class CodexBackend(AgentBackend):
             return {"tokens": int(match.group(1))}
         return None
 
-    def available_models(self) -> list[str]:
-        return [
-            "gpt-5.4",
-            "o3",
-            "o4-mini",
-            "gpt-4.1",
-        ]
+    def list_models(self) -> list[str]:
+        return ["Model listing not supported for this backend"]
 
     def auto_approve_flags(self) -> list[str]:
         return ["--full-auto"]

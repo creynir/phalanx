@@ -29,8 +29,8 @@ def team_setup(db, tmp_path):
     """Set up a team with lead and 2 workers, each with artifacts."""
     db.create_team("t1", "build a calculator")
     db.create_agent("lead-t1", "t1", "coordinate", role="lead")
-    db.create_agent("w1", "t1", "write code", role="worker")
-    db.create_agent("w2", "t1", "write tests", role="worker")
+    db.create_agent("w1", "t1", "write code", role="agent")
+    db.create_agent("w2", "t1", "write tests", role="agent")
 
     for aid, status, output in [
         ("w1", "success", {"files": ["calc.py"]}),
@@ -93,7 +93,7 @@ class TestIT073_WorkerIncomplete:
 
     def test_incomplete_worker_gets_original_task(self, db, tmp_path):
         db.create_team("t2", "task")
-        db.create_agent("w3", "t2", "write integration tests", role="worker")
+        db.create_agent("w3", "t2", "write integration tests", role="agent")
         db.update_agent("w3", status="dead")
 
         agent = db.get_agent("w3")
@@ -130,7 +130,7 @@ class TestIT076_ResumeSuspendedAgent:
 
     def test_resume_suspended(self, db, tmp_path):
         db.create_team("t1", "task")
-        db.create_agent("w1", "t1", "code", role="worker")
+        db.create_agent("w1", "t1", "code", role="agent")
         db.update_agent("w1", status="suspended")
 
         mock_pm = MagicMock()
@@ -151,7 +151,7 @@ class TestIT077_ResumeRunningAgent:
 
     def test_resume_running_errors(self, db, tmp_path):
         db.create_team("t1", "task")
-        db.create_agent("w1", "t1", "code", role="worker")
+        db.create_agent("w1", "t1", "code", role="agent")
         db.update_agent("w1", status="running")
 
         mock_pm = MagicMock()
@@ -166,7 +166,7 @@ class TestIT078_AutoApproveResumption:
 
     def test_auto_approve_passed(self, db, tmp_path):
         db.create_team("t1", "task")
-        db.create_agent("w1", "t1", "code", role="worker", backend="cursor")
+        db.create_agent("w1", "t1", "code", role="agent", backend="cursor")
         db.update_agent("w1", status="dead")
 
         mock_pm = MagicMock()
@@ -233,7 +233,7 @@ class TestIT080_ResumeAfterEscalation:
 
     def test_escalation_resume_context(self, db, tmp_path):
         db.create_team("t3", "test task")
-        db.create_agent("w5", "t3", "deploy to prod", role="worker")
+        db.create_agent("w5", "t3", "deploy to prod", role="agent")
         db.update_agent("w5", status="suspended", artifact_status="escalation")
 
         art = Artifact(

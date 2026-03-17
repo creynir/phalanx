@@ -36,16 +36,16 @@ class TestE2E030_ConfigurableIdleTimeout:
     """E2E-030: --idle-timeout 60 overrides default 1800s."""
 
     def test_custom_idle_timeout(self):
-        config = PhalanxConfig(idle_timeout_seconds=60)
-        assert config.idle_timeout_seconds == 60
+        config = PhalanxConfig(idle_timeout=60)
+        assert config.idle_timeout == 60
 
 
 class TestE2E031_ConfigurableMaxRuntime:
     """E2E-031: --max-runtime 120 kills long-running agent."""
 
     def test_custom_max_runtime(self):
-        config = PhalanxConfig(max_runtime_seconds=120)
-        assert config.max_runtime_seconds == 120
+        config = PhalanxConfig(max_runtime=120)
+        assert config.max_runtime == 120
 
 
 class TestE2E032_DefaultTimeouts:
@@ -53,8 +53,8 @@ class TestE2E032_DefaultTimeouts:
 
     def test_defaults(self):
         config = PhalanxConfig()
-        assert config.idle_timeout_seconds == 1800
-        assert config.max_runtime_seconds == 1800
+        assert config.idle_timeout == 1800
+        assert config.max_runtime == 1800
 
 
 class TestE2E033_StopPreservesArtifacts:

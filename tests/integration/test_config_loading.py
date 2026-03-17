@@ -41,5 +41,5 @@ class TestIT069_CustomTimeoutInjection:
     """IT-069: Custom idle-timeout flows correctly through DB creation."""
 
     def test_custom_timeout(self):
-        config = PhalanxConfig(idle_timeout_seconds=60)
-        assert config.idle_timeout_seconds == 60
+        config = PhalanxConfig(idle_timeout=60)
+        assert config.idle_timeout == 60

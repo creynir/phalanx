@@ -39,15 +39,13 @@ class PhalanxConfig:
     # researcher, coder, reviewer, architect, worker.
     backend_overrides: dict[str, str] | None = None
     default_model: str | None = None
-    idle_timeout_seconds: int = 1800  # 30 minutes
-    max_runtime_seconds: int = 1800  # 30 minutes
+    idle_timeout: int = 1800  # 30 minutes
+    max_runtime: int = 1800  # 30 minutes
     stall_check_interval: int = 20  # seconds
     max_retries: int = 3
     gc_after_hours: int = 24
     auto_approve: bool = False
     monitor_poll_interval: int = 20
-    enable_engineering_manager: bool = False
-    cost_table: dict | None = None
     rate_limit_backoff_seconds: int = 60
     continual_learning: ContinualLearningConfig = field(default_factory=ContinualLearningConfig)
 
@@ -59,6 +57,12 @@ class PhalanxConfig:
 
     @classmethod
     def from_dict(cls, d: dict) -> PhalanxConfig:
+        # Backward compatibility: map old key names to new ones.
+        d = dict(d)
+        if "idle_timeout_seconds" in d and "idle_timeout" not in d:
+            d["idle_timeout"] = d.pop("idle_timeout_seconds")
+        if "max_runtime_seconds" in d and "max_runtime" not in d:
+            d["max_runtime"] = d.pop("max_runtime_seconds")
         known = {f.name for f in cls.__dataclass_fields__.values()}
         filtered = {k: v for k, v in d.items() if k in known}
         if "continual_learning" in filtered and isinstance(filtered["continual_learning"], dict):
