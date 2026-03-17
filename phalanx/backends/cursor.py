@@ -15,26 +15,12 @@ from pathlib import Path
 from .base import AgentBackend
 
 
-_CLAUDE_TO_CURSOR_MODEL: dict[str, str] = {
-    # Claude API model names → cursor agent model names
-    "claude-opus-4-6": "opus-4.6",
-    "claude-sonnet-4-6": "sonnet-4.6",
-    "claude-haiku-4-5": "haiku-4.5",
-    "claude-opus-4-5": "opus-4.5",
-    "claude-sonnet-4-5": "sonnet-4.5",
-}
-
-
 class CursorBackend(AgentBackend):
     def name(self) -> str:
         return "cursor"
 
     def binary_name(self) -> str:
         return shutil.which("agent") or "agent"
-
-    def _normalize_model(self, model: str) -> str:
-        """Map claude API model names to cursor agent model names."""
-        return _CLAUDE_TO_CURSOR_MODEL.get(model, model)
 
     def build_start_command(
         self,
@@ -52,7 +38,7 @@ class CursorBackend(AgentBackend):
         # the TUI input box does not respond to Enter via send_keys.
         cmd.append("--print")
         if model:
-            cmd += ["--model", self._normalize_model(model)]
+            cmd += ["--model", model]
         if worktree:
             cmd += ["--worktree", worktree]
         # Pass prompt as positional arg
