@@ -6,6 +6,8 @@ import os
 
 import click
 
+from phalanx.commands._display import display_status
+
 
 def _get_root(ctx: click.Context):
     from pathlib import Path
@@ -43,8 +45,14 @@ def agent_status_cmd(ctx, agent_id):
         if result is None:
             click.echo(f"Agent '{agent_id}' not found", err=True)
             raise SystemExit(1)
+        if "status" in result:
+            result["status"] = display_status(result["status"])
     else:
-        result = {"agents": db.list_agents()}
+        agents = db.list_agents()
+        for a in agents:
+            if "status" in a:
+                a["status"] = display_status(a["status"])
+        result = {"agents": agents}
     if ctx.obj.get("json_mode"):
         _json_output(result)
     else:

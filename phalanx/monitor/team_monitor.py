@@ -29,6 +29,20 @@ from phalanx.process.manager import ProcessManager
 
 logger = logging.getLogger(__name__)
 
+GRACE_PERIOD = 30  # seconds before killing agent after artifact detected
+
+_TERMINAL_ARTIFACT_STATUSES = frozenset({"success", "failure", "escalation"})
+
+
+def _acquire_monitor_lock(team_id: str, db: StateDB) -> bool:
+    """Ensure only one monitor runs per team.
+
+    Uses the DB file_locks table with a synthetic path keyed on team_id.
+    Returns True if the lock was acquired, False if already held.
+    """
+    lock_path = f"__monitor_lock__/{team_id}"
+    return db.acquire_lock(lock_path, team_id, "__monitor__", 0)
+
 
 class _StreamLogCostScanner:
     """Incrementally scans stream.log files for token usage lines.
@@ -113,6 +127,51 @@ class _StreamLogCostScanner:
         self._offsets.pop(agent_id, None)
 
 
+class _ChatIdScanner:
+    """Incrementally scans stream.log files for chat/session IDs.
+
+    Tracks a read offset per agent so each chunk of new output is parsed
+    exactly once. On each poll, calls backend.parse_chat_id(new_text) and
+    returns the chat_id only if it's new (differs from known_chat_id).
+    """
+
+    def __init__(self) -> None:
+        self._offsets: dict[str, int] = {}
+
+    def scan(
+        self,
+        agent_id: str,
+        stream_log: Path,
+        backend,  # AgentBackend instance
+        known_chat_id: str | None = None,
+    ) -> str | None:
+        """Read new bytes from stream_log, parse for chat_id.
+
+        Returns the chat_id if found and different from known_chat_id.
+        Returns None if not found or same as known_chat_id.
+        """
+        if not stream_log.exists():
+            return None
+        offset = self._offsets.get(agent_id, 0)
+        try:
+            with open(stream_log, "r", errors="replace") as f:
+                f.seek(offset)
+                new_text = f.read()
+                self._offsets[agent_id] = f.tell()
+        except OSError:
+            return None
+        if not new_text:
+            return None
+        chat_id = backend.parse_chat_id(new_text)
+        if chat_id and chat_id != known_chat_id:
+            return chat_id
+        return None
+
+    def reset(self, agent_id: str) -> None:
+        """Reset offset for an agent (e.g., after restart)."""
+        self._offsets.pop(agent_id, None)
+
+
 def run_team_monitor(
     team_id: str,
     db: StateDB,
@@ -132,262 +191,505 @@ def run_team_monitor(
     """
     logger.info("Team monitor started for %s (poll=%ds)", team_id, poll_interval)
 
-    _cost_scanner = _StreamLogCostScanner()
+    if not _acquire_monitor_lock(team_id, db):
+        logger.warning("Monitor lock already held for team %s, exiting", team_id)
+        return
 
-    while True:
-        try:
-            agents = db.list_agents(team_id)
-        except Exception as e:
-            logger.error(
-                "Monitor DB error listing agents for team %s: %s", team_id, e, exc_info=True
-            )
-            time.sleep(poll_interval)
-            continue
+    try:
+        _cost_scanner = _StreamLogCostScanner()
+        _chat_id_scanner = _ChatIdScanner()
+        _grace_timers: dict[str, float] = {}
+        _team_completing = False
+        _team_grace_timers: dict[str, float] = {}
+        _sweep_done = False
 
-        if not agents:
-            logger.info("No agents found for team %s, exiting monitor", team_id)
-            break
-
-        active_count = 0
-        for agent in agents:
-            if agent["status"] in ("dead", "failed"):
-                continue
-
-            if agent["status"] == "suspended":
-                if _should_wake_suspended(db, agent):
-                    logger.info(
-                        "Waking suspended agent %s — post-artifact directives detected",
-                        agent["id"],
-                    )
-                    active_count += 1
-                    _wake_suspended_agent(
-                        phalanx_root=process_manager._root,
-                        db=db,
-                        process_manager=process_manager,
-                        heartbeat_monitor=heartbeat_monitor,
-                        agent=agent,
-                        lead_agent_id=lead_agent_id,
-                        message_dir=message_dir,
-                    )
-                continue
-
-            agent_id = agent["id"]
-            active_count += 1
-
-            # Consume startup-blocked markers emitted at spawn time.
-            startup_block = process_manager.consume_startup_blocked(team_id, agent_id)
-            if startup_block:
-                prompt_excerpt = startup_block.get("prompt_excerpt", "")
-                backend_name = startup_block.get("backend") or agent.get("backend") or "unknown"
-                auto_approve = _team_auto_approve(db, team_id)
-                db.update_agent(
-                    agent_id,
-                    status="blocked_on_prompt",
-                    prompt_state="startup_blocked",
-                    prompt_screen=prompt_excerpt[:500],
-                )
-                db.log_event(
-                    team_id,
-                    "startup_blocked",
-                    agent_id=agent_id,
-                    payload={"backend": backend_name},
-                )
-                if agent_id != lead_agent_id:
-                    _notify_lead(
-                        process_manager,
-                        lead_agent_id,
-                        message_dir,
-                        "startup_blocked",
-                        agent_id,
-                        detail=_startup_recovery_hint(
-                            agent_id, backend_name, prompt_excerpt, auto_approve
-                        ),
-                    )
-                # Skip the normal stall cycle this tick for this agent.
-                continue
-
-            # Re-discover agents that were resumed externally (e.g., by
-            # the team lead calling `phalanx resume-agent`).  After
-            # kill_agent the ProcessManager forgets the agent; we need
-            # to pick up the new tmux session so stall_detector doesn't
-            # immediately report DEAD.
-            if process_manager.get_process(agent_id) is None:
-                proc = process_manager.discover_agent(team_id, agent_id)
-                if proc is not None:
-                    stream_log = proc.stream_log
-                    if heartbeat_monitor.get_state(agent_id) is None:
-                        heartbeat_monitor.register(agent_id, stream_log)
-                    # Reset cost scanner offset so resumed agents are re-scanned
-                    _cost_scanner.reset(agent_id)
-                    logger.info("Re-discovered resumed agent %s", agent_id)
-
-            # Scan stream.log for new token usage lines (cost tracking).
-            # Uses the ProcessManager's tracked stream_log path so we always
-            # read the same file the heartbeat monitor watches.
-            if cost_aggregator is not None:
-                proc = process_manager.get_process(agent_id)
-                if proc is not None:
-                    _cost_scanner.scan(
-                        agent_id=agent_id,
-                        stream_log=proc.stream_log,
-                        backend_name=agent.get("backend") or "cursor",
-                        aggregator=cost_aggregator,
-                        team_id=team_id,
-                        role=agent.get("role") or "worker",
-                        model=agent.get("model"),
-                    )
-
+        while True:
             try:
-                event = stall_detector.check_agent(agent_id)
+                agents = db.list_agents(team_id)
+            except Exception as e:
+                logger.error(
+                    "Monitor DB error listing agents for team %s: %s", team_id, e, exc_info=True
+                )
+                time.sleep(poll_interval)
+                continue
 
-                # Only update heartbeat in DB when stream.log shows new activity
-                prev_hb = heartbeat_monitor.get_state(agent_id)
-                prev_ts = prev_hb.last_heartbeat if prev_hb else 0.0
-                updated = heartbeat_monitor.check(agent_id)
-                if updated is not None and updated.last_heartbeat > prev_ts:
-                    db.update_heartbeat(agent_id)
+            if not agents:
+                logger.info("No agents found for team %s, exiting monitor", team_id)
+                break
 
-                # Check for newly written artifacts regardless of stall events.
-                refreshed = db.get_agent(agent_id)
-                if refreshed and refreshed.get("artifact_status"):
-                    prev_status = agent.get("artifact_status")
-                    new_status = refreshed["artifact_status"]
+            # Startup sweep: recover completing agents from a previous
+            # monitor crash.  Runs once on the first iteration only.
+            if not _sweep_done:
+                _sweep_done = True
 
-                    # If the agent was marked blocked_on_prompt but has since
-                    # written its artifact, the block is stale — clear it.
-                    # Covers both agent_idle (brief idle before artifact write)
-                    # and permission_prompt (post-task prompts on a done agent).
-                    if (
-                        new_status in ("success", "failure")
-                        and refreshed.get("status") == "blocked_on_prompt"
-                        and refreshed.get("prompt_state") in ("agent_idle", "permission_prompt")
-                    ):
-                        db.update_agent(agent_id, status="running")
-                        logger.info(
-                            "Cleared stale blocked_on_prompt for agent %s "
-                            "(artifact=%s written after idle detection)",
-                            agent_id,
-                            new_status,
-                        )
+                # Detect if team is already in a team-wide completing state:
+                # if the lead agent is in completing state with a terminal artifact,
+                # this is a team-wide shutdown in progress.
+                for sa in agents:
+                    sa_id = sa["id"]
+                    is_lead = (sa.get("role") == "lead" or sa_id == lead_agent_id)
+                    if is_lead and sa["status"] == "completing" and sa.get("artifact_status") in _TERMINAL_ARTIFACT_STATUSES:
+                        _team_completing = True
+                        break
 
-                    if new_status == "success" and prev_status != "success":
-                        _notify_lead(
-                            process_manager,
-                            lead_agent_id,
-                            message_dir,
-                            "worker_done",
-                            agent_id,
-                        )
-                    elif new_status == "escalation" and prev_status != "escalation":
-                        _notify_lead(
-                            process_manager,
-                            lead_agent_id,
-                            message_dir,
-                            "worker_escalation",
-                            agent_id,
-                            detail=(
-                                "agent wrote escalation artifact — outer loop intervention needed"
-                            ),
-                        )
+                # Sweep dead agents with terminal artifacts → completed
+                for sa in agents:
+                    if sa["status"] == "dead" and sa.get("artifact_status") in _TERMINAL_ARTIFACT_STATUSES:
+                        sa_id = sa["id"]
+                        db.update_agent(sa_id, status="completed")
+                        db.log_event(team_id, "agent_completed_on_death", agent_id=sa_id, payload={"agent_id": sa_id, "artifact_status": sa["artifact_status"]})
+                        logger.info("Startup sweep: reclassified dead-with-artifact agent %s as completed", sa_id)
 
-                if event is None:
+                for sa in agents:
+                    if sa["status"] != "completing":
+                        continue
+                    sa_id = sa["id"]
+                    try:
+                        proc = process_manager.get_process(sa_id)
+                        if proc is not None and proc.is_alive():
+                            now = time.time()
+                            if _team_completing:
+                                _team_grace_timers[sa_id] = now + GRACE_PERIOD
+                            else:
+                                _grace_timers[sa_id] = now + GRACE_PERIOD
+                            logger.info("Startup sweep: re-armed grace timer for %s", sa_id)
+                        else:
+                            db.update_agent(sa_id, status="completed")
+                            logger.info(
+                                "Startup sweep: marked dead completing agent %s as completed", sa_id
+                            )
+                    except Exception as e:
+                        logger.warning("Startup sweep failed for agent %s: %s", sa_id, e)
+                        continue
+
+            # --- Team-completing grace timer expiry check ---
+            if _team_completing:
+                all_done = True
+                for agent in agents:
+                    agent_id = agent["id"]
+                    if agent["status"] in ("completed", "dead"):
+                        continue
+                    if agent_id in _team_grace_timers:
+                        if time.time() >= _team_grace_timers[agent_id]:
+                            try:
+                                process_manager.kill_agent(agent_id)
+                            except Exception as e:
+                                logger.warning(
+                                    "Failed to kill agent %s during team grace expiry (may already be dead): %s",
+                                    agent_id, e,
+                                )
+                            db.update_agent(agent_id, status="completed")
+                            db.log_event(
+                                team_id,
+                                "agent_completed",
+                                agent_id=agent_id,
+                                payload={"agent_id": agent_id},
+                            )
+                            logger.info("Team grace timer expired for %s, killed and marked completed", agent_id)
+                            del _team_grace_timers[agent_id]
+                        else:
+                            all_done = False
+                    elif agent["status"] not in ("completed", "dead", "suspended"):
+                        # Agent still active but not in team grace timers yet
+                        # (shouldn't happen in normal flow, but be safe)
+                        all_done = False
+
+                if all_done:
+                    db.update_team_status(team_id, "completed")
+                    db.log_event(team_id, "team_completed")
+                    logger.info("All agents completed in team %s, team is completed", team_id)
+                    break
+
+                time.sleep(poll_interval)
+                continue
+
+            active_count = 0
+            for agent in agents:
+                if agent["status"] in ("dead", "failed", "completed"):
                     continue
 
-                if event.state == AgentState.DEAD:
-                    logger.warning("Agent %s is dead (tmux gone)", agent_id)
-                    db.update_agent(agent_id, status="dead")
-                    db.log_event(team_id, "agent_dead", agent_id=agent_id)
-                    _notify_lead(
-                        process_manager, lead_agent_id, message_dir, "worker_dead", agent_id
-                    )
+                if agent["status"] == "suspended":
+                    if _should_wake_suspended(db, agent):
+                        logger.info(
+                            "Waking suspended agent %s — post-artifact directives detected",
+                            agent["id"],
+                        )
+                        active_count += 1
+                        _wake_suspended_agent(
+                            phalanx_root=process_manager._root,
+                            db=db,
+                            process_manager=process_manager,
+                            heartbeat_monitor=heartbeat_monitor,
+                            agent=agent,
+                            lead_agent_id=lead_agent_id,
+                            message_dir=message_dir,
+                        )
+                    continue
 
-                elif event.state == AgentState.IDLE_TIMEOUT:
-                    logger.warning("Agent %s idle timeout (%ds)", agent_id, idle_timeout)
-                    process_manager.kill_agent(agent_id)
-                    db.update_agent(agent_id, status="suspended")
-                    db.log_event(
-                        team_id,
-                        "idle_timeout",
-                        agent_id=agent_id,
-                        payload={"timeout_seconds": idle_timeout},
-                    )
-                    _notify_lead(
-                        process_manager, lead_agent_id, message_dir, "worker_timeout", agent_id
-                    )
+                agent_id = agent["id"]
+                active_count += 1
 
-                elif event.state == AgentState.BLOCKED_ON_PROMPT:
-                    logger.info(
-                        "Agent %s blocked on prompt: %s",
-                        agent_id,
-                        event.prompt_type,
-                    )
+                # Handle completing agents: skip stall/heartbeat checks,
+                # check grace timer expiry only.
+                if agent["status"] == "completing":
+                    if time.time() >= _grace_timers.get(agent_id, float("inf")):
+                        try:
+                            process_manager.kill_agent(agent_id)
+                        except Exception as e:
+                            logger.warning(
+                                "Failed to kill agent %s during grace expiry (may already be dead): %s",
+                                agent_id, e,
+                            )
+                        db.update_agent(agent_id, status="completed")
+                        db.log_event(
+                            team_id,
+                            "agent_completed",
+                            agent_id=agent_id,
+                            payload={"agent_id": agent_id},
+                        )
+                        logger.info("Grace timer expired for %s, killed and marked completed", agent_id)
+                    continue
+
+                # Consume startup-blocked markers emitted at spawn time.
+                startup_block = process_manager.consume_startup_blocked(team_id, agent_id)
+                if startup_block:
+                    prompt_excerpt = startup_block.get("prompt_excerpt", "")
+                    backend_name = startup_block.get("backend") or agent.get("backend") or "unknown"
+                    auto_approve = _team_auto_approve(db, team_id)
                     db.update_agent(
                         agent_id,
                         status="blocked_on_prompt",
-                        prompt_state=event.prompt_type,
-                        prompt_screen=event.screen_text[:500],
+                        prompt_state="startup_blocked",
+                        prompt_screen=prompt_excerpt[:500],
                     )
                     db.log_event(
                         team_id,
-                        "blocked_on_prompt",
+                        "startup_blocked",
                         agent_id=agent_id,
-                        payload={"prompt_type": event.prompt_type},
+                        payload={"backend": backend_name},
                     )
-
-                    if event.prompt_type == "agent_idle" and agent_id != lead_agent_id:
-                        _nudge_idle_agent(process_manager, agent_id, message_dir)
-                    elif event.prompt_type in ("connection_lost", "process_exited"):
-                        _handle_ghost_or_crash(
-                            process_manager,
-                            db,
-                            heartbeat_monitor,
-                            team_id,
-                            agent_id,
-                            lead_agent_id,
-                            message_dir,
-                        )
-                    elif event.prompt_type == "buffer_corrupted":
-                        _handle_buffer_corruption(
-                            process_manager,
-                            db,
-                            heartbeat_monitor,
-                            team_id,
-                            agent_id,
-                            lead_agent_id,
-                            message_dir,
-                        )
-                    elif event.prompt_type == "rate_limited":
-                        _handle_rate_limit(
-                            process_manager,
-                            db,
-                            team_id,
-                            agent_id,
-                            lead_agent_id,
-                            message_dir,
-                        )
-                    else:
+                    if agent_id != lead_agent_id:
                         _notify_lead(
                             process_manager,
                             lead_agent_id,
                             message_dir,
-                            "worker_blocked",
+                            "startup_blocked",
                             agent_id,
-                            detail=event.prompt_type or "",
+                            detail=_startup_recovery_hint(
+                                agent_id, backend_name, prompt_excerpt, auto_approve
+                            ),
+                        )
+                    # Skip the normal stall cycle this tick for this agent.
+                    continue
+
+                # Re-discover agents that were resumed externally (e.g., by
+                # the team lead calling `phalanx resume-agent`).  After
+                # kill_agent the ProcessManager forgets the agent; we need
+                # to pick up the new tmux session so stall_detector doesn't
+                # immediately report DEAD.
+                if process_manager.get_process(agent_id) is None:
+                    proc = process_manager.discover_agent(team_id, agent_id)
+                    if proc is not None:
+                        stream_log = proc.stream_log
+                        if heartbeat_monitor.get_state(agent_id) is None:
+                            heartbeat_monitor.register(agent_id, stream_log)
+                        # Reset cost scanner offset so resumed agents are re-scanned
+                        _cost_scanner.reset(agent_id)
+                        _chat_id_scanner.reset(agent_id)
+                        logger.info("Re-discovered resumed agent %s", agent_id)
+
+                # Scan stream.log for new token usage lines (cost tracking).
+                # Uses the ProcessManager's tracked stream_log path so we always
+                # read the same file the heartbeat monitor watches.
+                if cost_aggregator is not None:
+                    proc = process_manager.get_process(agent_id)
+                    if proc is not None:
+                        _cost_scanner.scan(
+                            agent_id=agent_id,
+                            stream_log=proc.stream_log,
+                            backend_name=agent.get("backend") or "cursor",
+                            aggregator=cost_aggregator,
+                            team_id=team_id,
+                            role=agent.get("role") or "worker",
+                            model=agent.get("model"),
                         )
 
-            except Exception as e:
-                logger.error(
-                    "Monitor error on agent %s: %s", agent.get("id", "?"), e, exc_info=True
-                )
-                continue
+                # Scan stream.log for chat/session IDs (Phase 4).
+                # Must happen BEFORE stall/heartbeat checks so chat_id is
+                # persisted even if the agent dies this poll cycle.
+                _agent_backend_name = agent.get("backend")
+                if _agent_backend_name:
+                    try:
+                        from phalanx.backends.registry import get_backend as _get_backend
+                        _backend = _get_backend(_agent_backend_name)
+                    except Exception:
+                        _backend = None
+                    if _backend is not None:
+                        _proc = process_manager.get_process(agent_id)
+                        if _proc is not None:
+                            _stream_log_path = _proc.stream_log
+                            _new_chat_id = _chat_id_scanner.scan(
+                                agent_id, _stream_log_path, _backend,
+                                known_chat_id=agent.get("chat_id"),
+                            )
+                            if _new_chat_id:
+                                db.update_agent(agent_id, chat_id=_new_chat_id)
 
-        if active_count == 0:
-            logger.info("All agents in team %s are in terminal state", team_id)
-            db.update_team_status(team_id, "dead")
-            db.log_event(team_id, "team_dead")
-            break
+                try:
+                    event = stall_detector.check_agent(agent_id)
 
-        time.sleep(poll_interval)
+                    # Only update heartbeat in DB when stream.log shows new activity
+                    prev_hb = heartbeat_monitor.get_state(agent_id)
+                    prev_ts = prev_hb.last_heartbeat if prev_hb else 0.0
+                    updated = heartbeat_monitor.check(agent_id)
+                    if updated is not None and updated.last_heartbeat > prev_ts:
+                        db.update_heartbeat(agent_id)
+
+                    # Check for newly written artifacts regardless of stall events.
+                    refreshed = db.get_agent(agent_id)
+                    if refreshed and refreshed.get("artifact_status"):
+                        prev_status = agent.get("artifact_status")
+                        new_status = refreshed["artifact_status"]
+
+                        # If the agent was marked blocked_on_prompt but has since
+                        # written its artifact, the block is stale — clear it.
+                        # Covers both agent_idle (brief idle before artifact write)
+                        # and permission_prompt (post-task prompts on a done agent).
+                        if (
+                            new_status in ("success", "failure")
+                            and refreshed.get("status") == "blocked_on_prompt"
+                            and refreshed.get("prompt_state") in ("agent_idle", "permission_prompt")
+                        ):
+                            db.update_agent(agent_id, status="running")
+                            logger.info(
+                                "Cleared stale blocked_on_prompt for agent %s "
+                                "(artifact=%s written after idle detection)",
+                                agent_id,
+                                new_status,
+                            )
+
+                        if new_status == "success" and prev_status != "success":
+                            _notify_lead(
+                                process_manager,
+                                lead_agent_id,
+                                message_dir,
+                                "worker_done",
+                                agent_id,
+                            )
+                        elif new_status == "escalation" and prev_status != "escalation":
+                            _notify_lead(
+                                process_manager,
+                                lead_agent_id,
+                                message_dir,
+                                "worker_escalation",
+                                agent_id,
+                                detail=(
+                                    "agent wrote escalation artifact — outer loop intervention needed"
+                                ),
+                            )
+
+                        # Transition running agent to completing on terminal artifact.
+                        if (
+                            new_status in _TERMINAL_ARTIFACT_STATUSES
+                            and agent["status"] == "running"
+                        ):
+                            is_lead = (agent.get("role") == "lead" or agent_id == lead_agent_id)
+
+                            if is_lead and not _team_completing:
+                                # Lead artifact triggers team-wide shutdown
+                                _team_completing = True
+                                db.update_team_status(team_id, "completing")
+                                db.log_event(
+                                    team_id,
+                                    "team_completing",
+                                    agent_id=agent_id,
+                                    payload={"agent_id": agent_id, "artifact_status": new_status},
+                                )
+                                logger.info(
+                                    "Lead artifact detected for %s (status=%s), triggering team shutdown",
+                                    agent_id,
+                                    new_status,
+                                )
+
+                                # Enroll all team agents in team shutdown
+                                for ta in agents:
+                                    ta_id = ta["id"]
+                                    ta_status = ta["status"]
+
+                                    if ta_status in ("completed", "dead"):
+                                        # Already terminal — skip
+                                        continue
+                                    elif ta_status == "suspended":
+                                        # Suspended agents are completed directly (no live process)
+                                        db.update_agent(ta_id, status="completed")
+                                        logger.info("Team shutdown: suspended agent %s marked completed directly", ta_id)
+                                    else:
+                                        # Running, blocked_on_prompt, or the lead itself — grace timer
+                                        db.update_agent(ta_id, status="completing")
+                                        _team_grace_timers[ta_id] = time.time() + GRACE_PERIOD
+                                        logger.info("Team shutdown: enrolled agent %s in grace timer", ta_id)
+
+                            elif not is_lead:
+                                # Worker artifact — Phase 1 individual grace timer
+                                db.update_agent(agent_id, status="completing")
+                                _grace_timers[agent_id] = time.time() + GRACE_PERIOD
+                                db.log_event(
+                                    team_id,
+                                    "worker_artifact_detected",
+                                    agent_id=agent_id,
+                                    payload={"agent_id": agent_id, "artifact_status": new_status},
+                                )
+                                logger.info(
+                                    "Worker artifact detected for %s (status=%s), entering grace period",
+                                    agent_id,
+                                    new_status,
+                                )
+
+                    if event is None:
+                        continue
+
+                    if event.state == AgentState.DEAD:
+                        logger.warning("Agent %s is dead (tmux gone)", agent_id)
+                        refreshed_dead = db.get_agent(agent_id)
+                        dead_artifact = refreshed_dead.get("artifact_status") if refreshed_dead else None
+                        if dead_artifact in _TERMINAL_ARTIFACT_STATUSES:
+                            is_lead_dead = (agent.get("role") == "lead" or agent_id == lead_agent_id)
+                            if is_lead_dead and not _team_completing:
+                                # Dead lead with artifact → trigger team-wide shutdown (Phase 2 path)
+                                _team_completing = True
+                                db.update_team_status(team_id, "completing")
+                                db.log_event(
+                                    team_id,
+                                    "team_completing",
+                                    agent_id=agent_id,
+                                    payload={"agent_id": agent_id, "artifact_status": dead_artifact},
+                                )
+                                logger.info(
+                                    "Dead lead artifact detected for %s (status=%s), triggering team shutdown",
+                                    agent_id,
+                                    dead_artifact,
+                                )
+                                # Enroll all team agents in team shutdown
+                                for ta in agents:
+                                    ta_id = ta["id"]
+                                    ta_status = ta["status"]
+                                    if ta_id == agent_id:
+                                        # The dead lead itself → completed directly
+                                        db.update_agent(ta_id, status="completed")
+                                        db.log_event(team_id, "agent_completed_on_death", agent_id=ta_id, payload={"agent_id": ta_id, "artifact_status": dead_artifact})
+                                        continue
+                                    if ta_status in ("completed", "dead"):
+                                        continue
+                                    elif ta_status == "suspended":
+                                        db.update_agent(ta_id, status="completed")
+                                        logger.info("Team shutdown: suspended agent %s marked completed directly", ta_id)
+                                    else:
+                                        db.update_agent(ta_id, status="completing")
+                                        _team_grace_timers[ta_id] = time.time() + GRACE_PERIOD
+                                        logger.info("Team shutdown: enrolled agent %s in grace timer", ta_id)
+                            else:
+                                db.update_agent(agent_id, status="completed")
+                                db.log_event(team_id, "agent_completed_on_death", agent_id=agent_id, payload={"agent_id": agent_id, "artifact_status": dead_artifact})
+                        else:
+                            db.update_agent(agent_id, status="dead")
+                            db.log_event(team_id, "agent_dead", agent_id=agent_id)
+                        _notify_lead(
+                            process_manager, lead_agent_id, message_dir, "worker_dead", agent_id
+                        )
+
+                    elif event.state == AgentState.IDLE_TIMEOUT:
+                        logger.warning("Agent %s idle timeout (%ds)", agent_id, idle_timeout)
+                        process_manager.kill_agent(agent_id)
+                        db.update_agent(agent_id, status="suspended")
+                        db.log_event(
+                            team_id,
+                            "idle_timeout",
+                            agent_id=agent_id,
+                            payload={"timeout_seconds": idle_timeout},
+                        )
+                        _notify_lead(
+                            process_manager, lead_agent_id, message_dir, "worker_timeout", agent_id
+                        )
+
+                    elif event.state == AgentState.BLOCKED_ON_PROMPT:
+                        logger.info(
+                            "Agent %s blocked on prompt: %s",
+                            agent_id,
+                            event.prompt_type,
+                        )
+                        db.update_agent(
+                            agent_id,
+                            status="blocked_on_prompt",
+                            prompt_state=event.prompt_type,
+                            prompt_screen=event.screen_text[:500],
+                        )
+                        db.log_event(
+                            team_id,
+                            "blocked_on_prompt",
+                            agent_id=agent_id,
+                            payload={"prompt_type": event.prompt_type},
+                        )
+
+                        if event.prompt_type == "agent_idle" and agent_id != lead_agent_id:
+                            _nudge_idle_agent(process_manager, agent_id, message_dir)
+                        elif event.prompt_type in ("connection_lost", "process_exited"):
+                            _handle_ghost_or_crash(
+                                process_manager,
+                                db,
+                                heartbeat_monitor,
+                                team_id,
+                                agent_id,
+                                lead_agent_id,
+                                message_dir,
+                            )
+                        elif event.prompt_type == "buffer_corrupted":
+                            _handle_buffer_corruption(
+                                process_manager,
+                                db,
+                                heartbeat_monitor,
+                                team_id,
+                                agent_id,
+                                lead_agent_id,
+                                message_dir,
+                            )
+                        elif event.prompt_type == "rate_limited":
+                            _handle_rate_limit(
+                                process_manager,
+                                db,
+                                team_id,
+                                agent_id,
+                                lead_agent_id,
+                                message_dir,
+                            )
+                        else:
+                            _notify_lead(
+                                process_manager,
+                                lead_agent_id,
+                                message_dir,
+                                "worker_blocked",
+                                agent_id,
+                                detail=event.prompt_type or "",
+                            )
+
+                except Exception as e:
+                    logger.error(
+                        "Monitor error on agent %s: %s", agent.get("id", "?"), e, exc_info=True
+                    )
+                    continue
+
+            if active_count == 0:
+                logger.info("All agents in team %s are in terminal state", team_id)
+                db.update_team_status(team_id, "dead")
+                db.log_event(team_id, "team_dead")
+                break
+
+            time.sleep(poll_interval)
+
+    finally:
+        try:
+            db.release_lock(f"__monitor_lock__/{team_id}")
+        except Exception:
+            pass
 
     logger.info("Team monitor for %s exiting", team_id)
 

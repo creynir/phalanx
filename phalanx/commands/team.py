@@ -6,6 +6,8 @@ from pathlib import Path
 
 import click
 
+from phalanx.commands._display import display_status
+
 _EXAMPLE_CONFIG = {
     "lead": {
         "model": "opus-4.6",
@@ -129,8 +131,8 @@ def team_list_cmd(ctx):
     else:
         for t in teams:
             ag = db.list_agents(t["id"])
-            running = sum(1 for a in ag if a["status"] == "running")
-            click.echo(f"  {t['id']}  {t['status']:<10} agents={len(ag)} running={running}  task={t['task'][:60]}")
+            running = sum(1 for a in ag if a["status"] in ("running", "completing"))
+            click.echo(f"  {t['id']}  {display_status(t['status']):<10} agents={len(ag)} running={running}  task={t['task'][:60]}")
 @team_group.command("status")
 @click.argument("team_id", required=False, default=None)
 @click.pass_context
@@ -144,8 +146,17 @@ def team_status_cmd(ctx, team_id):
         if result is None:
             click.echo(f"Team '{team_id}' not found", err=True)
             raise SystemExit(1)
+        # Map internal statuses to user-visible ones
+        if "team" in result and isinstance(result["team"], dict) and "status" in result["team"]:
+            result["team"]["status"] = display_status(result["team"]["status"])
+        for agent in result.get("agents", []):
+            if "status" in agent:
+                agent["status"] = display_status(agent["status"])
     else:
         teams = db.list_teams()
+        for t in teams:
+            if "status" in t:
+                t["status"] = display_status(t["status"])
         result = {"teams": teams, "count": len(teams)}
     if ctx.obj.get("json_mode"):
         _json_output(result)

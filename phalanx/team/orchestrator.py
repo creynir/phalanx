@@ -310,7 +310,7 @@ def stop_team(
     agents = db.list_agents(team_id)
     stopped = []
     for agent in agents:
-        if agent["status"] in ("running", "pending", "blocked_on_prompt"):
+        if agent["status"] in ("running", "pending", "blocked_on_prompt", "completing"):
             process_manager.kill_agent(agent["id"])
             db.update_agent(agent["id"], status="dead")
             stopped.append(agent["id"])
@@ -343,7 +343,7 @@ def resume_team(
     resumed = []
 
     for agent in agents:
-        if agent["status"] not in ("dead", "suspended"):
+        if agent["status"] not in ("dead", "suspended", "completed"):
             continue
 
         is_lead = agent["role"] == "lead"
@@ -365,6 +365,8 @@ def resume_team(
             continue
 
         db.update_agent(agent_id, status="running")
+        if agent["status"] == "completed":
+            db.update_agent(agent_id, artifact_status=None)
         heartbeat_monitor.register(agent_id, agent_proc.stream_log)
         resumed.append(agent_id)
 
@@ -392,8 +394,8 @@ def resume_single_agent(
     if agent is None:
         raise ValueError(f"Agent {agent_id} not found")
 
-    if agent["status"] not in ("dead", "suspended"):
-        raise ValueError(f"Agent {agent_id} is {agent['status']}, not dead/suspended")
+    if agent["status"] not in ("dead", "suspended", "completed"):
+        raise ValueError(f"Agent {agent_id} is {agent['status']}, not dead/suspended/completed")
 
     team_id = agent["team_id"]
     backend = get_backend(agent.get("backend", "cursor"))
@@ -410,6 +412,8 @@ def resume_single_agent(
         raise ValueError(f"Cannot resume agent {agent_id}: no task in DB and no task.md on disk")
 
     db.update_agent(agent_id, status="running")
+    if agent["status"] == "completed":
+        db.update_agent(agent_id, artifact_status=None)
     heartbeat_monitor.register(agent_id, agent_proc.stream_log)
     logger.info("Resumed agent %s in team %s", agent_id, team_id)
 
