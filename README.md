@@ -2,6 +2,16 @@
 
 Vendor-agnostic multi-agent orchestration CLI — spin up parallel AI coding teams from a single command.
 
+Runs on your existing Claude, Codex, and Gemini subscriptions — no API keys, no per-token billing.
+
+## Why Phalanx?
+
+Different AI providers have different strengths and different subscription limits. Mixing them in a structured team — one provider handling volume coding work, another handling review and judgment calls — is more efficient than routing everything through a single tool.
+
+Phalanx lets you route work to whichever provider fits. Codex for implementation, Opus for review, Sonnet for orchestration. Each agent in a team can use a different backend and model.
+
+Phalanx v2 was built using phalanx teams.
+
 ## Install
 
 ```bash
@@ -25,7 +35,17 @@ phalanx team create --config team.json
 
 Once launched, your agent knows all phalanx commands via an installed skill. Describe what you want in plain language and the agent handles team creation, task delegation, monitoring, and result consolidation.
 
-## Team Config (v2)
+## How It Works
+
+1. **You describe a goal** — in plain language to your agent, or via a config file
+2. **Phalanx spawns a team** — lead and workers run in isolated tmux sessions, optionally in separate git worktrees
+3. **The daemon watches** — detects stalls, crashes, and completions; pushes `[PHALANX EVENT]` notifications to the team lead
+4. **The lead reacts** — immediately reads worker artifacts, sends nudges, restarts dead agents
+5. **Results flow back** — workers write structured artifacts; the lead consolidates and writes a final team artifact
+
+State is stored in SQLite (WAL mode) at `.phalanx/state.db`.
+
+## Team Config
 
 Use `phalanx team create --example` to print a valid v2 config:
 
@@ -44,8 +64,9 @@ Use `phalanx team create --example` to print a valid v2 config:
     },
     {
       "model": "opus-4.6",
-      "prompt": "Implement the feature described by the lead.",
-      "backend": "claude"
+      "prompt": "Review the implementation for correctness, security issues, and spec compliance.",
+      "backend": "claude",
+      "soul": "path/to/reviewer-soul.md",
     }
   ],
   "idle_timeout": 1800,
@@ -70,14 +91,6 @@ Use `phalanx team create --example` to print a valid v2 config:
 
 Mix backends freely — each agent in a team can use a different backend and model.
 
-## Why Phalanx?
-
-Different AI providers have different strengths and different subscription limits. Mixing them in a structured team — one provider handling volume coding work, another handling review and judgment calls — is more efficient than routing everything through a single pay-per-token tool.
-
-Different providers have different strengths. One might have higher throughput limits for coding tasks; another might reason better for review and synthesis. Phalanx lets you route work to whichever provider fits, rather than running everything through a single tool.
-
-Phalanx v2 was built using phalanx teams.
-
 ## Works with codebones
 
 [codebones](https://github.com/creynir/codebones) generates structural context summaries of your codebase — AST tree and function signatures — so agents arrive at their task already knowing where things are, without burning tokens on code discovery.
@@ -89,6 +102,34 @@ codebones pack --no-files . --max-tokens 40000 > skeleton.md
 ```
 
 Install codebones alongside phalanx for multi-agent workflows on real codebases.
+
+## Soul System
+
+A *soul* is a markdown prompt file that defines an agent's role, tools, and behavioral rules. Phalanx injects the soul as a preamble before the agent's task prompt.
+
+**Built-in souls:**
+
+| Role | File | Used for |
+|------|------|----------|
+| `lead` | `phalanx/soul/team_lead.md` | Team lead agents |
+| `agent` | `phalanx/soul/agent.md` | Worker agents |
+
+Built-in souls are applied automatically based on role. They define event-reactive behavior for the lead (reacting to `[PHALANX EVENT]` notifications) and task-completion discipline for workers.
+
+**Custom soul:** Add a `soul` field to any `lead` or `agents[]` entry in your config pointing to a markdown file. Phalanx will use it in place of the built-in soul. You can also drop a `.phalanx/soul/` directory into your workspace to override built-ins project-wide.
+
+## Backends
+
+| Backend | Binary | Provider |
+|---------|--------|----------|
+| `cursor` | `agent` | All vendors (model-routed) |
+| `claude` | `claude` | Anthropic |
+| `codex` | `codex` | OpenAI |
+| `gemini` | `gemini` | Google |
+
+**Authentication:** Each backend CLI must be authenticated before Phalanx can spawn agents non-interactively. Run each binary at least once and complete its login flow before using it with Phalanx.
+
+**Auto-approve:** Pass `--auto-approve` to `phalanx team create` (or set it in your top-level launch) to enable non-interactive tool-call approval for spawned agents. Each backend exposes this differently under the hood; Phalanx handles the translation automatically.
 
 ## Command Reference
 
@@ -152,44 +193,6 @@ Install codebones alongside phalanx for multi-agent workflows on real codebases.
 |---------|-------------|
 | `phalanx init` | Initialize `.phalanx/` in the current workspace |
 | `phalanx --backend <b> --model <m>` | Launch your agent with phalanx skills installed |
-
-## Backends
-
-| Backend | Binary | Provider |
-|---------|--------|----------|
-| `cursor` | `agent` | All vendors (model-routed) |
-| `claude` | `claude` | Anthropic |
-| `codex` | `codex` | OpenAI |
-| `gemini` | `gemini` | Google |
-
-**Authentication:** Each backend CLI must be authenticated before Phalanx can spawn agents non-interactively. Run each binary at least once and complete its login flow before using it with Phalanx.
-
-**Auto-approve:** Pass `--auto-approve` to `phalanx team create` (or set it in your top-level launch) to enable non-interactive tool-call approval for spawned agents. Each backend exposes this differently under the hood; Phalanx handles the translation automatically.
-
-## Soul System
-
-A *soul* is a markdown prompt file that defines an agent's role, tools, and behavioral rules. Phalanx injects the soul as a preamble before the agent's task prompt.
-
-**Built-in souls:**
-
-| Role | File | Used for |
-|------|------|----------|
-| `lead` | `phalanx/soul/team_lead.md` | Team lead agents |
-| `agent` | `phalanx/soul/agent.md` | Worker agents |
-
-Built-in souls are applied automatically based on role. They define event-reactive behavior for the lead (reacting to `[PHALANX EVENT]` notifications) and task-completion discipline for workers.
-
-**Custom soul:** Add a `soul` field to any `lead` or `agents[]` entry in your config pointing to a markdown file. Phalanx will use it in place of the built-in soul. You can also drop a `.phalanx/soul/` directory into your workspace to override built-ins project-wide.
-
-## How It Works
-
-1. **You describe a goal** — in plain language to your agent, or via a config file
-2. **Phalanx spawns a team** — lead and workers run in isolated tmux sessions, optionally in separate git worktrees
-3. **The daemon watches** — detects stalls, crashes, and completions; pushes `[PHALANX EVENT]` notifications to the team lead
-4. **The lead reacts** — immediately reads worker artifacts, sends nudges, restarts dead agents
-5. **Results flow back** — workers write structured artifacts; the lead consolidates and writes a final team artifact
-
-State is stored in SQLite (WAL mode) at `.phalanx/state.db`.
 
 ## Develop
 
