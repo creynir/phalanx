@@ -32,15 +32,20 @@ Use `phalanx team create --example` to print a valid v2 config:
 ```json
 {
   "lead": {
-    "model": "opus-4.6",
+    "model": "sonnet-4.6",
     "prompt": "You are the team lead. Delegate tasks to agents and synthesize results.",
-    "backend": "cursor"
+    "backend": "claude"
   },
   "agents": [
     {
-      "model": "sonnet-4.6",
+      "model": "gtp-5.3-codex",
       "prompt": "Implement the feature described by the lead.",
-      "backend": "cursor"
+      "backend": "codex"
+    },
+    {
+      "model": "opus-4.6",
+      "prompt": "Implement the feature described by the lead.",
+      "backend": "claude"
     }
   ],
   "idle_timeout": 1800,
