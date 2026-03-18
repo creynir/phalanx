@@ -65,6 +65,53 @@ Use `phalanx team create --example` to print a valid v2 config:
 
 Mix backends freely — each agent in a team can use a different backend and model.
 
+## Why Phalanx?
+
+Different AI providers have different strengths and different subscription limits. Mixing them in a structured team — one provider handling volume coding work, another handling review and judgment calls — is more efficient than routing everything through a single pay-per-token tool.
+
+A setup that works well:
+
+```json
+{
+  "lead": {
+    "model": "claude-opus-4-6",
+    "backend": "claude",
+    "prompt": "Review all worker output for correctness, security issues, and spec compliance."
+  },
+  "agents": [
+    {
+      "model": "gpt-5.4",
+      "backend": "codex",
+      "prompt": "Implement the feature per spec. Scope: src/auth/*.ts"
+    },
+    {
+      "model": "gpt-5.4",
+      "backend": "codex",
+      "prompt": "Write unit tests. Scope: src/auth/__tests__/*.ts"
+    }
+  ]
+}
+```
+
+- **Codex workers** (OpenAI, $20/month ChatGPT Plus): higher throughput limits, well-suited for scoped implementation tasks
+- **Claude lead** (Anthropic, $20/month Claude Pro): Opus-class reasoning for review, architecture decisions, and result synthesis
+
+Two flat-rate subscriptions. No per-token billing surprises. Each provider doing what it does best.
+
+Phalanx v2 was built this way — Codex agents wrote the code, Claude reviewed it.
+
+## Works with codebones
+
+[codebones](https://github.com/creynir/codebones) generates structural context summaries of your codebase — file trees and function signatures — so agents arrive at their task already knowing where things are, without burning tokens on code discovery.
+
+```bash
+# Generate a structural map before running your team
+codebones pack . --format markdown --max-tokens 40000 > context.md
+# Then reference it in your agent prompts
+```
+
+Install codebones alongside phalanx for multi-agent workflows on real codebases.
+
 ## Command Reference
 
 ### `phalanx team`
