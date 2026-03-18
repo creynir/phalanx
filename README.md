@@ -80,11 +80,11 @@ Phalanx v2 was built using phalanx teams.
 
 ## Works with codebones
 
-[codebones](https://github.com/creynir/codebones) generates structural context summaries of your codebase — file trees and function signatures — so agents arrive at their task already knowing where things are, without burning tokens on code discovery.
+[codebones](https://github.com/creynir/codebones) generates structural context summaries of your codebase — AST tree and function signatures — so agents arrive at their task already knowing where things are, without burning tokens on code discovery.
 
 ```bash
 # Generate a structural map before running your team
-codebones pack . --format markdown --max-tokens 40000 > context.md
+codebones pack --no-files . --max-tokens 40000 > skeleton.md
 # Then reference it in your agent prompts
 ```
 
